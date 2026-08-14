@@ -56,6 +56,12 @@ interface AppCtx {
   draftFilters: SidebarFilters;
   setDraftFilters: (f: Partial<SidebarFilters>) => void;
   applyDraftFilters: () => void;
+  // 0 = no explicit search has happened yet. DiscoverPage's fetch effect
+  // keys off this instead of the filter values themselves, so nothing ever
+  // calls the API until Search is clicked (not even an implicit fetch on
+  // first mount) — sidebar edits alone never bump it.
+  searchTrigger: number;
+  bumpSearchTrigger: () => void;
   cachePlants: (plants: Plant[]) => void;
   getPlantsForList: (list: PlantList) => Plant[];
   getCachedPlants: () => Plant[];
@@ -93,6 +99,7 @@ function AppProvider({ children }: { children: ReactNode }) {
   const [userLists, setLists] = useState<PlantList[]>([]);
   const [filters, setFiltersState] = useState<FilterState>(FILTER_DEFAULTS);
   const [draftFilters, setDraftFiltersState] = useState<SidebarFilters>(SIDEBAR_FILTER_DEFAULTS);
+  const [searchTrigger, setSearchTrigger] = useState(0);
   const [plantsCache, setPlantsCache] = useState<Map<string, Plant>>(new Map());
 
   // Restores the signed-in state from the backend session cookie (if any) on
@@ -163,10 +170,16 @@ function AppProvider({ children }: { children: ReactNode }) {
     clearFilters: () => {
       setFiltersState(FILTER_DEFAULTS);
       setDraftFiltersState(SIDEBAR_FILTER_DEFAULTS);
+      setSearchTrigger(0);
     },
     draftFilters,
     setDraftFilters: (f) => setDraftFiltersState((prev) => ({ ...prev, ...f })),
-    applyDraftFilters: () => setFiltersState((prev) => ({ ...prev, ...draftFilters })),
+    applyDraftFilters: () => {
+      setFiltersState((prev) => ({ ...prev, ...draftFilters }));
+      setSearchTrigger((n) => n + 1);
+    },
+    searchTrigger,
+    bumpSearchTrigger: () => setSearchTrigger((n) => n + 1),
     cachePlants,
     getPlantsForList,
     getCachedPlants,
@@ -1229,15 +1242,26 @@ function FilterSidebar() {
 // ─── Discover Page ────────────────────────────────────────────────────────────
 
 function DiscoverPage() {
-  const { filters, setFilters, setDraftFilters, clearFilters, cachePlants } = useApp();
+  const { filters, setFilters, setDraftFilters, clearFilters, cachePlants, searchTrigger, bumpSearchTrigger } =
+    useApp();
   const [plants, setPlants] = useState<Plant[]>([]);
-  const [loading, setLoading] = useState(true);
+  const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  // Sunlight/edible/zone are filtered server-side (zone via an inclusive
-  // range match — see backend/app/perenual_client.py). Query/native/flowering
-  // stay client-side below since Perenual doesn't support them.
+  // Keyed on searchTrigger (bumped only by clicking "Search" or removing an
+  // active-filter chip below) rather than the filter values themselves, so
+  // nothing calls the API — not even on first mount — until the user
+  // explicitly asks for it. Sunlight/edible/zone are filtered server-side
+  // (zone via an inclusive range match — see backend/app/perenual_client.py).
+  // Query/native/flowering stay client-side since Perenual doesn't support them.
   useEffect(() => {
+    if (searchTrigger === 0) {
+      setPlants([]);
+      setLoading(false);
+      setError(null);
+      return;
+    }
+
     let cancelled = false;
     setLoading(true);
     setError(null);
@@ -1261,7 +1285,7 @@ function DiscoverPage() {
       cancelled = true;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [filters.sunlight, filters.edibleOnly, filters.zone]);
+  }, [searchTrigger]);
 
   const filtered = useMemo(() => {
     return plants.filter((p) => {
@@ -1393,6 +1417,7 @@ function DiscoverPage() {
                     n.delete(s);
                     setFilters({ sunlight: n });
                     setDraftFilters({ sunlight: n });
+                    bumpSearchTrigger();
                   }}
                   style={{ background: "none", border: "none", cursor: "pointer", display: "flex" }}
                 >
@@ -1471,6 +1496,7 @@ function DiscoverPage() {
                   onClick={() => {
                     setFilters({ edibleOnly: false });
                     setDraftFilters({ edibleOnly: false });
+                    bumpSearchTrigger();
                   }}
                   style={{ background: "none", border: "none", cursor: "pointer", display: "flex" }}
                 >
@@ -1483,19 +1509,71 @@ function DiscoverPage() {
 
         {/* Results */}
         <div style={{ padding: "22px 40px 48px" }}>
-          <p
-            style={{
-              fontFamily: "'Public Sans', sans-serif",
-              fontSize: 13,
-              color: "#7A776F",
-              marginBottom: 18,
-            }}
-          >
-            <span style={{ fontWeight: 600, color: "#2F4A3D" }}>{filtered.length}</span> plants
-            found
-          </p>
+          {searchTrigger > 0 && (
+            <p
+              style={{
+                fontFamily: "'Public Sans', sans-serif",
+                fontSize: 13,
+                color: "#7A776F",
+                marginBottom: 18,
+              }}
+            >
+              <span style={{ fontWeight: 600, color: "#2F4A3D" }}>{filtered.length}</span> plants
+              found
+            </p>
+          )}
 
-          {error ? (
+          {searchTrigger === 0 ? (
+            <div
+              style={{
+                display: "flex",
+                flexDirection: "column",
+                alignItems: "center",
+                justifyContent: "center",
+                padding: "80px 0",
+                gap: 16,
+              }}
+            >
+              <div
+                style={{
+                  width: 72,
+                  height: 72,
+                  borderRadius: "50%",
+                  backgroundColor: "#EDE8DC",
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "center",
+                }}
+              >
+                <Search size={28} strokeWidth={1.5} color="#9CAF88" />
+              </div>
+              <div style={{ textAlign: "center" }}>
+                <p
+                  style={{
+                    fontFamily: "'Fraunces', Georgia, serif",
+                    fontSize: 20,
+                    fontWeight: 500,
+                    color: "#2F4A3D",
+                    marginBottom: 8,
+                  }}
+                >
+                  Set your filters and search
+                </p>
+                <p
+                  style={{
+                    fontFamily: "'Public Sans', sans-serif",
+                    fontSize: 14,
+                    color: "#7A776F",
+                    lineHeight: 1.65,
+                    maxWidth: 340,
+                  }}
+                >
+                  Pick a sunlight, zone, or trait filter in the sidebar (optional), then click
+                  Search to browse plants.
+                </p>
+              </div>
+            </div>
+          ) : error ? (
             <p style={{ fontFamily: "'Public Sans', sans-serif", fontSize: 14, color: "#C77B4D" }}>
               {error}
             </p>
