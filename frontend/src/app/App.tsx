@@ -1,11 +1,11 @@
-import { useState, useMemo, useEffect, createContext, useContext, ReactNode } from "react";
+import { useState, useMemo, useEffect, useRef, createContext, useContext, ReactNode } from "react";
 import {
   Leaf, Bookmark, BookmarkCheck, Sun, Droplets, ChevronRight, ChevronDown,
   X, Plus, Search, Check, Camera, Settings, HelpCircle, LogOut, Pencil,
   Trash2, User, SendHorizonal,
 } from "lucide-react";
 import { Plant, PlantList } from "./data";
-import { fetchPlants, fetchPlantById } from "./api";
+import { fetchPlants, fetchPlantById, googleSignIn, getCurrentUser, signOutRequest, type AuthUser } from "./api";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -20,12 +20,17 @@ type Page =
 interface FilterState {
   query: string;
   sunlight: Set<string>;
-  soilTypes: Set<string>;
   zone: string;
   nativeOnly: boolean;
   floweringOnly: boolean;
   edibleOnly: boolean;
 }
+
+// Sidebar-editable subset of FilterState. Edits land here first and only
+// take effect (and trigger a search) once the user clicks "Search" — query
+// isn't included since the hero search box stays instant (it's free,
+// client-side only, and isn't part of the left-nav sidebar).
+type SidebarFilters = Omit<FilterState, "query">;
 
 // ─── Context ──────────────────────────────────────────────────────────────────
 
@@ -33,7 +38,8 @@ interface AppCtx {
   page: Page;
   setPage: (p: Page) => void;
   isSignedIn: boolean;
-  signIn: () => void;
+  currentUser: AuthUser | null;
+  completeSignIn: (user: AuthUser) => void;
   signOut: () => void;
   savedPlants: Set<string>;
   toggleSave: (id: string) => void;
@@ -47,6 +53,9 @@ interface AppCtx {
   filters: FilterState;
   setFilters: (f: Partial<FilterState>) => void;
   clearFilters: () => void;
+  draftFilters: SidebarFilters;
+  setDraftFilters: (f: Partial<SidebarFilters>) => void;
+  applyDraftFilters: () => void;
   cachePlants: (plants: Plant[]) => void;
   getPlantsForList: (list: PlantList) => Plant[];
   getCachedPlants: () => Plant[];
@@ -57,7 +66,14 @@ const AppContext = createContext<AppCtx | null>(null);
 const FILTER_DEFAULTS: FilterState = {
   query: "",
   sunlight: new Set(),
-  soilTypes: new Set(),
+  zone: "",
+  nativeOnly: false,
+  floweringOnly: false,
+  edibleOnly: false,
+};
+
+const SIDEBAR_FILTER_DEFAULTS: SidebarFilters = {
+  sunlight: new Set(),
   zone: "",
   nativeOnly: false,
   floweringOnly: false,
@@ -72,11 +88,20 @@ function useApp() {
 
 function AppProvider({ children }: { children: ReactNode }) {
   const [page, setPage] = useState<Page>({ name: "discover" });
-  const [isSignedIn, setSignedIn] = useState(true);
+  const [currentUser, setCurrentUser] = useState<AuthUser | null>(null);
   const [savedPlants, setSaved] = useState<Set<string>>(new Set());
   const [userLists, setLists] = useState<PlantList[]>([]);
   const [filters, setFiltersState] = useState<FilterState>(FILTER_DEFAULTS);
+  const [draftFilters, setDraftFiltersState] = useState<SidebarFilters>(SIDEBAR_FILTER_DEFAULTS);
   const [plantsCache, setPlantsCache] = useState<Map<string, Plant>>(new Map());
+
+  // Restores the signed-in state from the backend session cookie (if any) on
+  // load, rather than defaulting to signed-in like the original wireframe did.
+  useEffect(() => {
+    getCurrentUser()
+      .then(setCurrentUser)
+      .catch(() => setCurrentUser(null));
+  }, []);
 
   const cachePlants = (plants: Plant[]) =>
     setPlantsCache((prev) => {
@@ -95,9 +120,13 @@ function AppProvider({ children }: { children: ReactNode }) {
   const ctx: AppCtx = {
     page,
     setPage,
-    isSignedIn,
-    signIn: () => setSignedIn(true),
-    signOut: () => setSignedIn(false),
+    isSignedIn: currentUser !== null,
+    currentUser,
+    completeSignIn: (user) => setCurrentUser(user),
+    signOut: () => {
+      setCurrentUser(null);
+      signOutRequest();
+    },
     savedPlants,
     toggleSave: (id) =>
       setSaved((prev) => {
@@ -131,7 +160,13 @@ function AppProvider({ children }: { children: ReactNode }) {
       setLists((prev) => prev.map((l) => (l.id === id ? { ...l, name } : l))),
     filters,
     setFilters: (f) => setFiltersState((prev) => ({ ...prev, ...f })),
-    clearFilters: () => setFiltersState(FILTER_DEFAULTS),
+    clearFilters: () => {
+      setFiltersState(FILTER_DEFAULTS);
+      setDraftFiltersState(SIDEBAR_FILTER_DEFAULTS);
+    },
+    draftFilters,
+    setDraftFilters: (f) => setDraftFiltersState((prev) => ({ ...prev, ...f })),
+    applyDraftFilters: () => setFiltersState((prev) => ({ ...prev, ...draftFilters })),
     cachePlants,
     getPlantsForList,
     getCachedPlants,
@@ -160,8 +195,14 @@ function PlantfolioLogo({ size = 28 }: { size?: number }) {
 // ─── Header ───────────────────────────────────────────────────────────────────
 
 function Header() {
-  const { page, setPage, isSignedIn, signIn } = useApp();
+  const { page, setPage, isSignedIn, currentUser } = useApp();
   const active = page.name;
+  const initials = (currentUser?.name ?? currentUser?.email ?? "?")
+    .split(" ")
+    .map((part) => part[0])
+    .slice(0, 2)
+    .join("")
+    .toUpperCase();
 
   function NavLink({
     target,
@@ -282,7 +323,7 @@ function Header() {
                 flexShrink: 0,
               }}
             >
-              JH
+              {initials}
             </div>
             <span
               style={{
@@ -291,12 +332,12 @@ function Header() {
                 color: "#F6F1E7",
               }}
             >
-              Jamie
+              {currentUser?.name ?? currentUser?.email}
             </span>
           </button>
         ) : (
           <button
-            onClick={signIn}
+            onClick={() => setPage({ name: "account" })}
             style={{
               fontFamily: "'Public Sans', sans-serif",
               fontSize: 14,
@@ -317,10 +358,86 @@ function Header() {
   );
 }
 
+// ─── Google Sign-In Button ────────────────────────────────────────────────────
+// Wraps Google Identity Services (loaded via the <script> tag in index.html).
+// Renders Google's own button into a div ref rather than a custom button,
+// since GIS owns the click handling and credential flow.
+
+declare global {
+  interface Window {
+    google?: {
+      accounts: {
+        id: {
+          initialize: (config: { client_id: string; callback: (resp: { credential: string }) => void }) => void;
+          renderButton: (parent: HTMLElement, options: Record<string, unknown>) => void;
+        };
+      };
+    };
+  }
+}
+
+function GoogleSignInButton({ onSuccess }: { onSuccess: (user: AuthUser) => void }) {
+  const buttonRef = useRef<HTMLDivElement>(null);
+  const clientId = import.meta.env.VITE_GOOGLE_CLIENT_ID as string | undefined;
+
+  useEffect(() => {
+    if (!clientId) return;
+    let cancelled = false;
+
+    function tryRender(attemptsLeft: number) {
+      if (cancelled) return;
+      if (!window.google?.accounts?.id) {
+        if (attemptsLeft > 0) setTimeout(() => tryRender(attemptsLeft - 1), 100);
+        return;
+      }
+      window.google.accounts.id.initialize({
+        client_id: clientId,
+        callback: async (response) => {
+          try {
+            const user = await googleSignIn(response.credential);
+            onSuccess(user);
+          } catch (err) {
+            console.error("Google sign-in failed", err);
+          }
+        },
+      });
+      if (buttonRef.current) {
+        window.google.accounts.id.renderButton(buttonRef.current, {
+          theme: "outline",
+          size: "large",
+          width: 300,
+        });
+      }
+    }
+
+    tryRender(40);
+    return () => {
+      cancelled = true;
+    };
+  }, [clientId, onSuccess]);
+
+  if (!clientId) {
+    return (
+      <p
+        style={{
+          fontFamily: "'Public Sans', sans-serif",
+          fontSize: 12,
+          color: "#9CAF88",
+          textAlign: "center",
+        }}
+      >
+        Google sign-in isn't configured (missing VITE_GOOGLE_CLIENT_ID).
+      </p>
+    );
+  }
+
+  return <div ref={buttonRef} style={{ display: "flex", justifyContent: "center" }} />;
+}
+
 // ─── Sign-in Gate Modal ───────────────────────────────────────────────────────
 
 function GateModal({ onClose }: { onClose: () => void }) {
-  const { signIn, setPage } = useApp();
+  const { completeSignIn } = useApp();
   return (
     <div
       style={{
@@ -403,46 +520,12 @@ function GateModal({ onClose }: { onClose: () => void }) {
         >
           Create a free account to save plants and build curated garden collections.
         </p>
-        <button
-          onClick={() => {
-            signIn();
-            setPage({ name: "account" });
+        <GoogleSignInButton
+          onSuccess={(user) => {
+            completeSignIn(user);
             onClose();
           }}
-          style={{
-            width: "100%",
-            padding: "13px 0",
-            borderRadius: 12,
-            backgroundColor: "#C77B4D",
-            color: "#F6F1E7",
-            border: "none",
-            fontFamily: "'Public Sans', sans-serif",
-            fontSize: 14,
-            fontWeight: 600,
-            cursor: "pointer",
-            marginBottom: 10,
-          }}
-        >
-          Create a free account
-        </button>
-        <button
-          onClick={() => {
-            signIn();
-            onClose();
-          }}
-          style={{
-            width: "100%",
-            padding: "8px 0",
-            backgroundColor: "transparent",
-            border: "none",
-            fontFamily: "'Public Sans', sans-serif",
-            fontSize: 14,
-            color: "#9CAF88",
-            cursor: "pointer",
-          }}
-        >
-          Sign in instead
-        </button>
+        />
       </div>
     </div>
   );
@@ -905,27 +988,20 @@ function PlantCard({ plant }: { plant: Plant }) {
 // ─── Filter Sidebar ───────────────────────────────────────────────────────────
 
 function FilterSidebar() {
-  const { filters, setFilters, clearFilters } = useApp();
+  const { draftFilters, setDraftFilters, applyDraftFilters, clearFilters } = useApp();
 
   const toggleSun = (v: string) => {
-    const n = new Set(filters.sunlight);
+    const n = new Set(draftFilters.sunlight);
     n.has(v) ? n.delete(v) : n.add(v);
-    setFilters({ sunlight: n });
-  };
-
-  const toggleSoil = (v: string) => {
-    const n = new Set(filters.soilTypes);
-    n.has(v) ? n.delete(v) : n.add(v);
-    setFilters({ soilTypes: n });
+    setDraftFilters({ sunlight: n });
   };
 
   const activeCount =
-    filters.sunlight.size +
-    filters.soilTypes.size +
-    (filters.zone ? 1 : 0) +
-    (filters.nativeOnly ? 1 : 0) +
-    (filters.floweringOnly ? 1 : 0) +
-    (filters.edibleOnly ? 1 : 0);
+    draftFilters.sunlight.size +
+    (draftFilters.zone ? 1 : 0) +
+    (draftFilters.nativeOnly ? 1 : 0) +
+    (draftFilters.floweringOnly ? 1 : 0) +
+    (draftFilters.edibleOnly ? 1 : 0);
 
   return (
     <aside
@@ -991,52 +1067,11 @@ function FilterSidebar() {
         </p>
         <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
           {["Full Sun", "Partial", "Shade"].map((s) => {
-            const on = filters.sunlight.has(s);
+            const on = draftFilters.sunlight.has(s);
             return (
               <button
                 key={s}
                 onClick={() => toggleSun(s)}
-                style={{
-                  padding: "6px 13px",
-                  borderRadius: 8,
-                  fontSize: 13,
-                  fontFamily: "'Public Sans', sans-serif",
-                  backgroundColor: on ? "#2F4A3D" : "#EDE8DC",
-                  color: on ? "#F6F1E7" : "#2F4A3D",
-                  border: "none",
-                  cursor: "pointer",
-                  transition: "background 0.12s, color 0.12s",
-                }}
-              >
-                {s}
-              </button>
-            );
-          })}
-        </div>
-      </div>
-
-      {/* Soil Type */}
-      <div style={{ marginBottom: 20 }}>
-        <p
-          style={{
-            fontFamily: "'Public Sans', sans-serif",
-            fontSize: 10,
-            fontWeight: 700,
-            color: "#9CAF88",
-            textTransform: "uppercase",
-            letterSpacing: "0.1em",
-            marginBottom: 9,
-          }}
-        >
-          Soil Type
-        </p>
-        <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
-          {["Clay", "Loamy", "Sandy"].map((s) => {
-            const on = filters.soilTypes.has(s);
-            return (
-              <button
-                key={s}
-                onClick={() => toggleSoil(s)}
                 style={{
                   padding: "6px 13px",
                   borderRadius: 8,
@@ -1071,10 +1106,9 @@ function FilterSidebar() {
         >
           USDA Zone
         </p>
-        <input
-          value={filters.zone}
-          onChange={(e) => setFilters({ zone: e.target.value })}
-          placeholder="e.g. 7"
+        <select
+          value={draftFilters.zone}
+          onChange={(e) => setDraftFilters({ zone: e.target.value })}
           style={{
             width: "100%",
             padding: "8px 12px",
@@ -1087,7 +1121,14 @@ function FilterSidebar() {
             outline: "none",
             boxSizing: "border-box",
           }}
-        />
+        >
+          <option value="">Any zone</option>
+          {Array.from({ length: 13 }, (_, i) => i + 1).map((z) => (
+            <option key={z} value={String(z)}>
+              Zone {z}
+            </option>
+          ))}
+        </select>
       </div>
 
       {/* Plant Traits */}
@@ -1113,11 +1154,11 @@ function FilterSidebar() {
               { label: "Edible", key: "edibleOnly" },
             ] as Array<{ label: string; key: "nativeOnly" | "floweringOnly" | "edibleOnly" }>
           ).map(({ label, key }) => {
-            const on = filters[key];
+            const on = draftFilters[key];
             return (
               <button
                 key={key}
-                onClick={() => setFilters({ [key]: !on })}
+                onClick={() => setDraftFilters({ [key]: !on })}
                 style={{
                   display: "flex",
                   alignItems: "center",
@@ -1162,6 +1203,25 @@ function FilterSidebar() {
           })}
         </div>
       </div>
+
+      <button
+        onClick={applyDraftFilters}
+        style={{
+          width: "100%",
+          marginTop: 20,
+          padding: "10px 0",
+          borderRadius: 10,
+          backgroundColor: "#C77B4D",
+          color: "#F6F1E7",
+          border: "none",
+          fontFamily: "'Public Sans', sans-serif",
+          fontSize: 14,
+          fontWeight: 600,
+          cursor: "pointer",
+        }}
+      >
+        Search
+      </button>
     </aside>
   );
 }
@@ -1169,14 +1229,14 @@ function FilterSidebar() {
 // ─── Discover Page ────────────────────────────────────────────────────────────
 
 function DiscoverPage() {
-  const { filters, setFilters, clearFilters, cachePlants } = useApp();
+  const { filters, setFilters, setDraftFilters, clearFilters, cachePlants } = useApp();
   const [plants, setPlants] = useState<Plant[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
   // Sunlight/edible/zone are filtered server-side (zone via an inclusive
-  // range match — see backend/app/perenual_client.py). Query/soil/native/
-  // flowering stay client-side below since Perenual doesn't support them.
+  // range match — see backend/app/perenual_client.py). Query/native/flowering
+  // stay client-side below since Perenual doesn't support them.
   useEffect(() => {
     let cancelled = false;
     setLoading(true);
@@ -1211,8 +1271,6 @@ function DiscoverPage() {
         !p.latinName.toLowerCase().includes(filters.query.toLowerCase())
       )
         return false;
-      if (filters.soilTypes.size && !p.soilTypes.some((s) => filters.soilTypes.has(s)))
-        return false;
       if (filters.nativeOnly && !p.native) return false;
       if (filters.floweringOnly && !p.flowering) return false;
       return true;
@@ -1221,7 +1279,6 @@ function DiscoverPage() {
 
   const activeCount =
     filters.sunlight.size +
-    filters.soilTypes.size +
     (filters.zone ? 1 : 0) +
     (filters.nativeOnly ? 1 : 0) +
     (filters.floweringOnly ? 1 : 0) +
@@ -1335,34 +1392,7 @@ function DiscoverPage() {
                     const n = new Set(filters.sunlight);
                     n.delete(s);
                     setFilters({ sunlight: n });
-                  }}
-                  style={{ background: "none", border: "none", cursor: "pointer", display: "flex" }}
-                >
-                  <X size={10} strokeWidth={2.2} color="#9CAF88" />
-                </button>
-              </span>
-            ))}
-            {[...filters.soilTypes].map((s) => (
-              <span
-                key={s}
-                style={{
-                  display: "flex",
-                  alignItems: "center",
-                  gap: 5,
-                  backgroundColor: "#2F4A3D",
-                  color: "#F6F1E7",
-                  fontFamily: "'Public Sans', sans-serif",
-                  fontSize: 12,
-                  borderRadius: 999,
-                  padding: "4px 10px",
-                }}
-              >
-                {s}
-                <button
-                  onClick={() => {
-                    const n = new Set(filters.soilTypes);
-                    n.delete(s);
-                    setFilters({ soilTypes: n });
+                    setDraftFilters({ sunlight: n });
                   }}
                   style={{ background: "none", border: "none", cursor: "pointer", display: "flex" }}
                 >
@@ -1386,7 +1416,10 @@ function DiscoverPage() {
               >
                 Native only
                 <button
-                  onClick={() => setFilters({ nativeOnly: false })}
+                  onClick={() => {
+                    setFilters({ nativeOnly: false });
+                    setDraftFilters({ nativeOnly: false });
+                  }}
                   style={{ background: "none", border: "none", cursor: "pointer", display: "flex" }}
                 >
                   <X size={10} strokeWidth={2.2} color="#9CAF88" />
@@ -1409,7 +1442,10 @@ function DiscoverPage() {
               >
                 Flowering
                 <button
-                  onClick={() => setFilters({ floweringOnly: false })}
+                  onClick={() => {
+                    setFilters({ floweringOnly: false });
+                    setDraftFilters({ floweringOnly: false });
+                  }}
                   style={{ background: "none", border: "none", cursor: "pointer", display: "flex" }}
                 >
                   <X size={10} strokeWidth={2.2} color="#9CAF88" />
@@ -1432,7 +1468,10 @@ function DiscoverPage() {
               >
                 Edible
                 <button
-                  onClick={() => setFilters({ edibleOnly: false })}
+                  onClick={() => {
+                    setFilters({ edibleOnly: false });
+                    setDraftFilters({ edibleOnly: false });
+                  }}
                   style={{ background: "none", border: "none", cursor: "pointer", display: "flex" }}
                 >
                   <X size={10} strokeWidth={2.2} color="#9CAF88" />
@@ -1458,7 +1497,7 @@ function DiscoverPage() {
 
           {error ? (
             <p style={{ fontFamily: "'Public Sans', sans-serif", fontSize: 14, color: "#C77B4D" }}>
-              {error} — is the backend running at the configured API URL?
+              {error}
             </p>
           ) : loading ? (
             <p style={{ fontFamily: "'Public Sans', sans-serif", fontSize: 14, color: "#7A776F" }}>
@@ -3179,7 +3218,7 @@ function SettingsRow({
 // ─── Account Page ─────────────────────────────────────────────────────────────
 
 function AccountPage() {
-  const { isSignedIn, signIn, signOut, setPage, userLists, savedPlants } = useApp();
+  const { isSignedIn, currentUser, completeSignIn, signOut, setPage, userLists, savedPlants } = useApp();
 
   if (!isSignedIn) {
     return (
@@ -3231,23 +3270,9 @@ function AccountPage() {
         >
           Sign in to access your saved plants, curated lists, and personalized settings.
         </p>
-        <button
-          onClick={signIn}
-          style={{
-            marginTop: 8,
-            padding: "12px 28px",
-            borderRadius: 12,
-            backgroundColor: "#C77B4D",
-            color: "#F6F1E7",
-            border: "none",
-            fontFamily: "'Public Sans', sans-serif",
-            fontSize: 14,
-            fontWeight: 600,
-            cursor: "pointer",
-          }}
-        >
-          Sign in / Create account
-        </button>
+        <div style={{ marginTop: 8 }}>
+          <GoogleSignInButton onSuccess={completeSignIn} />
+        </div>
         <button
           onClick={() => setPage({ name: "support" })}
           style={{
@@ -3282,24 +3307,37 @@ function AccountPage() {
           marginBottom: 24,
         }}
       >
-        <div
-          style={{
-            width: 60,
-            height: 60,
-            borderRadius: "50%",
-            backgroundColor: "#C77B4D",
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "center",
-            fontFamily: "'Fraunces', Georgia, serif",
-            fontSize: 20,
-            fontWeight: 600,
-            color: "#F6F1E7",
-            flexShrink: 0,
-          }}
-        >
-          JH
-        </div>
+        {currentUser?.picture ? (
+          <img
+            src={currentUser.picture}
+            alt=""
+            style={{ width: 60, height: 60, borderRadius: "50%", flexShrink: 0, objectFit: "cover" }}
+          />
+        ) : (
+          <div
+            style={{
+              width: 60,
+              height: 60,
+              borderRadius: "50%",
+              backgroundColor: "#C77B4D",
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "center",
+              fontFamily: "'Fraunces', Georgia, serif",
+              fontSize: 20,
+              fontWeight: 600,
+              color: "#F6F1E7",
+              flexShrink: 0,
+            }}
+          >
+            {(currentUser?.name ?? currentUser?.email ?? "?")
+              .split(" ")
+              .map((part) => part[0])
+              .slice(0, 2)
+              .join("")
+              .toUpperCase()}
+          </div>
+        )}
         <div style={{ flex: 1 }}>
           <p
             style={{
@@ -3309,7 +3347,7 @@ function AccountPage() {
               color: "#F6F1E7",
             }}
           >
-            Jamie Hartwell
+            {currentUser?.name ?? currentUser?.email}
           </p>
           <p
             style={{
@@ -3319,7 +3357,7 @@ function AccountPage() {
               marginTop: 2,
             }}
           >
-            jamie@example.com
+            {currentUser?.email}
           </p>
         </div>
         <div style={{ display: "flex", gap: 24 }}>
