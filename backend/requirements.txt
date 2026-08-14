@@ -5,3 +5,4 @@ python-dotenv>=1.0
 requests>=2.31
 gunicorn>=22.0
 pytest>=8.0
+google-auth>=2.29

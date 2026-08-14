@@ -102,3 +102,17 @@ def test_missing_api_key_raises_perenual_error(app):
     with app.app_context():
         with pytest.raises(PerenualError):
             search_plants()
+
+
+@patch("app.perenual_client.requests.get")
+def test_rate_limit_raises_friendly_message(mock_get, app):
+    import requests
+
+    response = Mock(status_code=429)
+    http_error = requests.HTTPError(response=response)
+    response.raise_for_status = Mock(side_effect=http_error)
+    mock_get.return_value = response
+
+    with app.app_context():
+        with pytest.raises(PerenualError, match="API limit exceeded at the moment. Please try again in 1 hour"):
+            search_plants()

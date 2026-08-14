@@ -51,6 +51,10 @@ def _get(path: str, params: dict) -> dict:
     try:
         response = requests.get(f"{_base_url()}{path}", params=params, timeout=10)
         response.raise_for_status()
+    except requests.HTTPError as exc:
+        if exc.response is not None and exc.response.status_code == 429:
+            raise PerenualError("API limit exceeded at the moment. Please try again in 1 hour") from exc
+        raise PerenualError(f"Perenual request to {path} failed: {exc}") from exc
     except requests.RequestException as exc:
         raise PerenualError(f"Perenual request to {path} failed: {exc}") from exc
     return response.json()
@@ -109,7 +113,7 @@ def get_plant_details(plant_id: str) -> dict:
     return normalize_plant(data, data)
 
 
-def search_plants(sunlight: list[str] | None = None, edible: bool | None = None, zone: str | None = None, page_limit: int = 2) -> list[dict]:
+def search_plants(sunlight: list[str] | None = None, edible: bool | None = None, zone: str | None = None, page_limit: int = 1) -> list[dict]:
     """Search Perenual, narrowing server-side on what it supports and
     (when a zone is given) enforcing an inclusive hardiness-range match
     client-side, since Perenual's own filter does not do that.

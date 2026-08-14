@@ -1,6 +1,24 @@
 from app.extensions import db
 
 
+class User(db.Model):
+    __tablename__ = "users"
+
+    id = db.Column(db.Integer, primary_key=True)
+    google_sub = db.Column(db.String(255), unique=True, nullable=False)
+    email = db.Column(db.String(255), nullable=False)
+    name = db.Column(db.String(255), nullable=True)
+    picture = db.Column(db.String(500), nullable=True)
+
+    def to_dict(self) -> dict:
+        return {
+            "id": self.id,
+            "email": self.email,
+            "name": self.name,
+            "picture": self.picture,
+        }
+
+
 class PlantList(db.Model):
     __tablename__ = "plant_lists"
 
