@@ -206,6 +206,18 @@ tempCodeRunnerFile.py
 # Ruff stuff:
 .ruff_cache/
 
+# --- Node / frontend (frontend/) ---
+node_modules/
+frontend/dist/
+frontend/.vite/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# Backend SQLite dev database
+backend/*.db
+
 # PyPI configuration file
 .pypirc
 
