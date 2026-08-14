@@ -218,6 +218,10 @@ pnpm-debug.log*
 # Backend SQLite dev database
 backend/*.db
 
+# Claude Code tooling config (dev-server launch config for the assistant's
+# browser preview, not part of the app)
+.claude/
+
 # PyPI configuration file
 .pypirc
 

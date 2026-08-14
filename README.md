@@ -51,6 +51,9 @@ The frontend is a thin client: all Perenual API calls, filtering logic, and
 - Description
 - Image
 
+**Accounts:**
+- Sign in with Google (real OAuth via Google Identity Services + a Flask-side session — see setup below)
+
 **Planned:**
 - Persist saved/tagged plant lists against a real backend datastore (the API exists in `backend/app/routes/lists.py`; the frontend doesn't call it yet)
 - Digital gardening journal — planting dates, success/fail notes, year-over-year recommendations
@@ -66,6 +69,7 @@ Plantfolio pulls plant data from the [Perenual API](https://perenual.com/docs/pl
 - Python 3.10+ (Anaconda or `venv`)
 - Node 18+ and npm
 - A free API key from [Perenual](https://perenual.com/docs/api)
+- A Google OAuth Client ID (free) for sign-in — see step 2
 
 ### 1. Clone the repo
 
@@ -76,16 +80,22 @@ cd plantfolio
 
 ### 2. Backend setup
 
+First, create a Google OAuth Client ID: [Google Cloud Console](https://console.cloud.google.com/) → APIs & Services → Credentials → Create Credentials → OAuth client ID → Web application → add `http://localhost:5173` under Authorized JavaScript origins. Copy the resulting Client ID (not the secret — it isn't needed).
+
 ```bash
 cd backend
 python3 -m venv .venv && source .venv/bin/activate   # or: conda create -n plantfolio python=3.11 && conda activate plantfolio
 pip install -r requirements.txt
-cp .env.example .env   # then edit .env and add your real PERENUAL_API_KEY
+cp .env.example .env
+# then edit .env:
+#   PERENUAL_API_KEY   — your real Perenual key
+#   GOOGLE_CLIENT_ID    — the Client ID from above
+#   SECRET_KEY          — generate with: python -c "import secrets; print(secrets.token_hex(32))"
 flask --app run.py run
 ```
 
 The API is now available at `http://127.0.0.1:5000`. `.env` is excluded from
-version control via `.gitignore` — **never commit real API keys**.
+version control via `.gitignore` — **never commit real API keys or secrets**.
 
 ### 3. Frontend setup
 
@@ -94,6 +104,7 @@ In a second terminal:
 ```bash
 cd frontend
 npm install
+cp .env.example .env   # then edit .env and set VITE_GOOGLE_CLIENT_ID to the same Client ID as the backend
 npm run dev
 ```
 
@@ -110,14 +121,14 @@ All backend tests mock the Perenual API — no live network calls or API key req
 
 ## Project Status
 
-The Flask backend (`backend/`) and the frontend wiring to it are implemented: `GET /api/plants` (with sunlight/edible/zone filters) and `GET /api/plants/<id>` are live, and the Discover/Plant Detail screens call them instead of static mock data. Saved/tagged plant lists have a working backend API (`backend/app/routes/lists.py`) but the frontend still manages lists in local component state — wiring that up, and deploying the backend to Render, are next.
+The Flask backend (`backend/`) and the frontend wiring to it are implemented: `GET /api/plants` (with sunlight/edible/zone filters) and `GET /api/plants/<id>` are live, and the Discover/Plant Detail screens call them instead of static mock data. Real Google sign-in (`/api/auth/google`, `/api/auth/me`, `/api/auth/logout`) is also implemented, backed by a `User` table and a signed session cookie. Saved/tagged plant lists have a working backend API (`backend/app/routes/lists.py`) but the frontend still manages lists in local component state — wiring that up, and deploying the backend to Render, are next.
 
 ## Known Issues / Backlog
 
 - Perenual's own `hardiness=<zone>` filter on `/species-list` behaves like an exact match rather than an inclusive range. `backend/app/perenual_client.py` works around this by fetching candidate results and filtering locally so a search for zone 7 also returns plants rated for zones like 5–9, not just exactly 7.
 - Perenual's `species-list`/`species/details` payloads don't include several fields the UI wants (soil type, native-to-region flag, precise mature size, bloom season) — these are currently defaulted/best-effort in `normalize_plant()` rather than fully populated.
 - Saved plant lists aren't wired to the frontend yet (see Project Status above).
-- Free-tier API rate limits may constrain how this prototype could scale toward a production app — evaluating options for caching or a paid tier if the project grows.
+- Zone filtering is expensive on Perenual's free tier: each zone search fans out into one `/species/details` call per candidate plant (to read its hardiness range), so a handful of zone searches in a row can hit Perenual's rate limit (confirmed locally — a second zone search within about a minute of the first returned `429 Too Many Requests`). `search_plants()`'s `page_limit` is deliberately kept small (1 page / ~30 candidates) to reduce this; a production version would need caching or a paid tier.
 - Not yet deployed to Render.
 
 ## License
