@@ -1,6 +1,6 @@
 import { useState, useMemo, useEffect, useRef, createContext, useContext, ReactNode } from "react";
 import {
-  Leaf, Bookmark, BookmarkCheck, Sun, Droplets, ChevronRight, ChevronDown,
+  Leaf, Bookmark, BookmarkCheck, Sun, CloudSun, Cloud, Droplets, ChevronRight, ChevronDown,
   X, Plus, Search, Check, Camera, Settings, HelpCircle, LogOut, Pencil,
   Trash2, User, SendHorizonal,
 } from "lucide-react";
@@ -15,13 +15,13 @@ type Page =
   | { name: "lists" }
   | { name: "list"; id: string }
   | { name: "support" }
+  | { name: "about" }
   | { name: "account" };
 
 interface FilterState {
   query: string;
   sunlight: Set<string>;
   zone: string;
-  nativeOnly: boolean;
   floweringOnly: boolean;
   edibleOnly: boolean;
 }
@@ -73,7 +73,6 @@ const FILTER_DEFAULTS: FilterState = {
   query: "",
   sunlight: new Set(),
   zone: "",
-  nativeOnly: false,
   floweringOnly: false,
   edibleOnly: false,
 };
@@ -81,7 +80,6 @@ const FILTER_DEFAULTS: FilterState = {
 const SIDEBAR_FILTER_DEFAULTS: SidebarFilters = {
   sunlight: new Set(),
   zone: "",
-  nativeOnly: false,
   floweringOnly: false,
   edibleOnly: false,
 };
@@ -221,7 +219,7 @@ function Header() {
     target,
     label,
   }: {
-    target: "discover" | "lists" | "support" | "account";
+    target: "discover" | "lists" | "support" | "about" | "account";
     label: string;
   }) {
     const isActive = active === target;
@@ -301,6 +299,7 @@ function Header() {
       {/* Secondary nav */}
       <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
         <NavLink target="support" label="Support" />
+        <NavLink target="about" label="About" />
 
         {isSignedIn ? (
           <button
@@ -790,12 +789,19 @@ function SaveModal({ plantId, onClose }: { plantId: string; onClose: () => void 
 
 // ─── Plant Card (grid card) ───────────────────────────────────────────────────
 
+const SUNLIGHT_ICONS: Record<Plant["sunlight"], typeof Sun> = {
+  "Full Sun": Sun,
+  Partial: CloudSun,
+  Shade: Cloud,
+};
+
 function PlantCard({ plant }: { plant: Plant }) {
   const { isSaved, toggleSave, isSignedIn, setPage } = useApp();
   const [gateOpen, setGateOpen] = useState(false);
   const [saveOpen, setSaveOpen] = useState(false);
   const [hovered, setHovered] = useState(false);
   const saved = isSaved(plant.id);
+  const SunlightIcon = SUNLIGHT_ICONS[plant.sunlight];
 
   return (
     <>
@@ -835,24 +841,6 @@ function PlantCard({ plant }: { plant: Plant }) {
               transform: hovered ? "scale(1.06)" : "scale(1)",
             }}
           />
-          {plant.native && (
-            <span
-              style={{
-                position: "absolute",
-                top: 10,
-                left: 10,
-                backgroundColor: "#2F4A3D",
-                color: "#F6F1E7",
-                fontFamily: "'Public Sans', sans-serif",
-                fontSize: 11,
-                fontWeight: 600,
-                borderRadius: 999,
-                padding: "3px 9px",
-              }}
-            >
-              Native
-            </span>
-          )}
           <button
             onClick={(e) => {
               e.stopPropagation();
@@ -959,7 +947,7 @@ function PlantCard({ plant }: { plant: Plant }) {
                 color: "#7A776F",
               }}
             >
-              <Sun size={12} strokeWidth={1.5} color="#C77B4D" />
+              <SunlightIcon size={12} strokeWidth={1.5} color="#C77B4D" />
               {plant.sunlight}
             </span>
             <span
@@ -1012,7 +1000,6 @@ function FilterSidebar() {
   const activeCount =
     draftFilters.sunlight.size +
     (draftFilters.zone ? 1 : 0) +
-    (draftFilters.nativeOnly ? 1 : 0) +
     (draftFilters.floweringOnly ? 1 : 0) +
     (draftFilters.edibleOnly ? 1 : 0);
 
@@ -1162,10 +1149,9 @@ function FilterSidebar() {
         <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
           {(
             [
-              { label: "Native plants only", key: "nativeOnly" },
               { label: "Flowering", key: "floweringOnly" },
               { label: "Edible", key: "edibleOnly" },
-            ] as Array<{ label: string; key: "nativeOnly" | "floweringOnly" | "edibleOnly" }>
+            ] as Array<{ label: string; key: "floweringOnly" | "edibleOnly" }>
           ).map(({ label, key }) => {
             const on = draftFilters[key];
             return (
@@ -1253,7 +1239,7 @@ function DiscoverPage() {
   // nothing calls the API — not even on first mount — until the user
   // explicitly asks for it. Sunlight/edible/zone are filtered server-side
   // (zone via an inclusive range match — see backend/app/perenual_client.py).
-  // Query/native/flowering stay client-side since Perenual doesn't support them.
+  // Query/flowering stay client-side since Perenual doesn't support them.
   useEffect(() => {
     if (searchTrigger === 0) {
       setPlants([]);
@@ -1295,7 +1281,6 @@ function DiscoverPage() {
         !p.latinName.toLowerCase().includes(filters.query.toLowerCase())
       )
         return false;
-      if (filters.nativeOnly && !p.native) return false;
       if (filters.floweringOnly && !p.flowering) return false;
       return true;
     });
@@ -1304,7 +1289,6 @@ function DiscoverPage() {
   const activeCount =
     filters.sunlight.size +
     (filters.zone ? 1 : 0) +
-    (filters.nativeOnly ? 1 : 0) +
     (filters.floweringOnly ? 1 : 0) +
     (filters.edibleOnly ? 1 : 0);
 
@@ -1332,7 +1316,7 @@ function DiscoverPage() {
               marginBottom: 6,
             }}
           >
-            Discover Native Plants
+            Discover Plants
           </h1>
           <p
             style={{
@@ -1342,7 +1326,7 @@ function DiscoverPage() {
               marginBottom: 18,
             }}
           >
-            Browse plants native to your region — matched to your sunlight, soil, and climate zone.
+            Browse plants matched to your sunlight and climate zone.
           </p>
           <div
             style={{
@@ -1425,32 +1409,6 @@ function DiscoverPage() {
                 </button>
               </span>
             ))}
-            {filters.nativeOnly && (
-              <span
-                style={{
-                  display: "flex",
-                  alignItems: "center",
-                  gap: 5,
-                  backgroundColor: "#2F4A3D",
-                  color: "#F6F1E7",
-                  fontFamily: "'Public Sans', sans-serif",
-                  fontSize: 12,
-                  borderRadius: 999,
-                  padding: "4px 10px",
-                }}
-              >
-                Native only
-                <button
-                  onClick={() => {
-                    setFilters({ nativeOnly: false });
-                    setDraftFilters({ nativeOnly: false });
-                  }}
-                  style={{ background: "none", border: "none", cursor: "pointer", display: "flex" }}
-                >
-                  <X size={10} strokeWidth={2.2} color="#9CAF88" />
-                </button>
-              </span>
-            )}
             {filters.floweringOnly && (
               <span
                 style={{
@@ -1626,7 +1584,7 @@ function DiscoverPage() {
                     maxWidth: 340,
                   }}
                 >
-                  Try loosening sun or soil requirements — most native plants tolerate some
+                  Try loosening your sunlight or zone requirements — most plants tolerate some
                   variation.
                 </p>
               </div>
@@ -1772,24 +1730,6 @@ function PlantDetailPage({ plantId }: { plantId: string }) {
                 style={{ width: "100%", height: "100%", objectFit: "cover" }}
               />
             </div>
-            <div style={{ display: "flex", flexWrap: "wrap", gap: 8, marginTop: 16 }}>
-              {plant.tags.map((tag) => (
-                <span
-                  key={tag}
-                  style={{
-                    backgroundColor: "#EDE8DC",
-                    color: "#2F4A3D",
-                    fontFamily: "'Public Sans', sans-serif",
-                    fontSize: 13,
-                    borderRadius: 999,
-                    padding: "5px 13px",
-                    border: "1px solid #D8C3A5",
-                  }}
-                >
-                  {tag}
-                </span>
-              ))}
-            </div>
           </div>
 
           {/* Right: info */}
@@ -1816,23 +1756,6 @@ function PlantDetailPage({ plantId }: { plantId: string }) {
                 >
                   {plant.commonName}
                 </h1>
-                {plant.native && (
-                  <span
-                    style={{
-                      backgroundColor: "#2F4A3D",
-                      color: "#F6F1E7",
-                      fontFamily: "'Public Sans', sans-serif",
-                      fontSize: 12,
-                      fontWeight: 600,
-                      borderRadius: 999,
-                      padding: "4px 12px",
-                      flexShrink: 0,
-                      marginTop: 6,
-                    }}
-                  >
-                    Native
-                  </span>
-                )}
               </div>
               <p
                 style={{
@@ -1859,7 +1782,7 @@ function PlantDetailPage({ plantId }: { plantId: string }) {
 
             {/* Care cards */}
             <div
-              style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 10 }}
+              style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}
             >
               {[
                 {
@@ -1871,11 +1794,6 @@ function PlantDetailPage({ plantId }: { plantId: string }) {
                   icon: <Leaf size={13} strokeWidth={1.5} color="#9CAF88" />,
                   label: "Mature Size",
                   value: plant.matureSize,
-                },
-                {
-                  icon: <Sun size={13} strokeWidth={1.5} color="#C77B4D" />,
-                  label: "Bloom",
-                  value: plant.bloomSeason,
                 },
               ].map((c) => (
                 <div
@@ -1941,8 +1859,14 @@ function PlantDetailPage({ plantId }: { plantId: string }) {
                 {[
                   ["Sunlight", plant.sunlight],
                   ["USDA Zones", plant.zones],
-                  ["Soil types", plant.soilTypes.join(", ")],
+                  ["Type", plant.tags.join(", ") || "Unknown"],
                   ["Flowering", plant.flowering ? "Yes" : "No"],
+                  // Perenual only has bloom-season data for some species
+                  // (mostly true flowering plants, not trees/conifers) —
+                  // show the row only when there's something to say.
+                  ...(plant.bloomSeason !== "Unknown"
+                    ? [["Bloom Season", plant.bloomSeason]]
+                    : []),
                 ].map(([k, v]) => (
                   <div key={k}>
                     <p
@@ -2868,6 +2792,98 @@ function ListDetailPage({ listId }: { listId: string }) {
   );
 }
 
+// ─── About Page ───────────────────────────────────────────────────────────────
+
+function AboutPage() {
+  return (
+    <div style={{ maxWidth: 640, margin: "0 auto", padding: "36px 40px 64px" }}>
+      <h1
+        style={{
+          fontFamily: "'Fraunces', Georgia, serif",
+          fontSize: 28,
+          fontWeight: 500,
+          color: "#2F4A3D",
+          marginBottom: 24,
+        }}
+      >
+        Why Plantfolio
+      </h1>
+
+      <p
+        style={{
+          fontFamily: "'Public Sans', sans-serif",
+          fontSize: 15,
+          color: "#555250",
+          lineHeight: 1.75,
+          marginBottom: 20,
+        }}
+      >
+        Plantfolio started as a Google Doc. Every time I came across a plant I liked —
+        scrolling through a nursery site, a gardening forum, a random blog post — I'd jot it
+        down: what it was, where I could buy it, where it might go in my yard. There are so
+        many separate plant databases out there, each holding just a slice of the information,
+        that keeping my own running list felt like the only way to actually use any of it.
+        Plantfolio is an attempt to turn that Google Doc into something more useful: one place
+        to search, compare, and keep track of the plants I actually want to grow.
+      </p>
+
+      <h2
+        style={{
+          fontFamily: "'Fraunces', Georgia, serif",
+          fontSize: 20,
+          fontWeight: 500,
+          color: "#2F4A3D",
+          marginTop: 32,
+          marginBottom: 12,
+        }}
+      >
+        A bit about me
+      </h2>
+
+      <p
+        style={{
+          fontFamily: "'Public Sans', sans-serif",
+          fontSize: 15,
+          color: "#555250",
+          lineHeight: 1.75,
+          marginBottom: 16,
+        }}
+      >
+        I garden in USDA zone 7. I was thrilled to finally be free of an HOA and its long list
+        of plant and patio restrictions, and I'm fortunate now to have a yard with real space
+        to experiment — native plants, vegetables, whatever catches my interest next.
+      </p>
+
+      <p
+        style={{
+          fontFamily: "'Public Sans', sans-serif",
+          fontSize: 15,
+          color: "#555250",
+          lineHeight: 1.75,
+          marginBottom: 16,
+        }}
+      >
+        Native plants in particular have become a bit of an obsession, because they're such a
+        clear win-win: they support the local ecosystem, and since they're already adapted to
+        this area, they need far less fuss to keep alive than the finickiest ornamentals.
+      </p>
+
+      <p
+        style={{
+          fontFamily: "'Public Sans', sans-serif",
+          fontSize: 15,
+          color: "#555250",
+          lineHeight: 1.75,
+        }}
+      >
+        My neighbors deserve a lot of credit for their patience while I experiment — my garden
+        has its fair share of unruly patches that badly need weeding, mulching, or a serious
+        pruning while I figure out what's working and what isn't.
+      </p>
+    </div>
+  );
+}
+
 // ─── Support Page ─────────────────────────────────────────────────────────────
 
 const SUPPORT_CATS = ["Bug report", "Suggestion", "Plant data issue", "Account help", "Other"];
@@ -3604,6 +3620,7 @@ function AppShell() {
             {page.name === "lists" && <MyListsPage />}
             {page.name === "list" && <ListDetailPage listId={page.id} />}
             {page.name === "support" && <SupportPage />}
+            {page.name === "about" && <AboutPage />}
             {page.name === "account" && <AccountPage />}
           </div>
         )}

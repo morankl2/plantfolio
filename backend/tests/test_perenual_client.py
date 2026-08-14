@@ -11,7 +11,11 @@ def _species(id_, common_name="European Silver Fir", sunlight=None):
         "common_name": common_name,
         "scientific_name": ["Abies alba"],
         "default_image": {"regular_url": "https://example.com/img.jpg"},
-        "sunlight": sunlight or ["full_sun"],
+        # Real Perenual data is space-separated and inconsistently cased
+        # ("full sun", "Full sun", "part shade", "filtered shade" have all
+        # been observed) rather than the underscored enum the filter param
+        # uses, so tests exercise that real-world format.
+        "sunlight": sunlight or ["full sun"],
     }
 
 
@@ -36,11 +40,56 @@ def test_normalize_plant_maps_expected_fields():
     assert plant["zones"] == "3–9"
     assert plant["imageUrl"] == "https://example.com/img.jpg"
     assert plant["water"] == "Average"
+    assert plant["sunlight"] == "Full Sun"
 
 
 def test_normalize_plant_defaults_when_hardiness_missing():
     plant = normalize_plant(_species(1))
     assert plant["zones"] == "Unknown"
+
+
+@pytest.mark.parametrize(
+    "raw,expected",
+    [
+        (["full sun"], "Full Sun"),
+        (["Full sun"], "Full Sun"),
+        (["full_sun"], "Full Sun"),
+        (["part shade"], "Partial"),
+        (["filtered shade"], "Shade"),
+        (["full shade"], "Shade"),
+        (None, "Partial"),
+        ([], "Partial"),
+    ],
+)
+def test_normalize_plant_sunlight_matches_real_perenual_formats(raw, expected):
+    species = _species(1)
+    species["sunlight"] = raw  # bypass _species()'s default-if-falsy fallback
+    plant = normalize_plant(species)
+    assert plant["sunlight"] == expected
+
+
+def test_normalize_plant_common_name_is_title_cased():
+    plant = normalize_plant(_species(1, common_name="european silver fir"))
+    assert plant["commonName"] == "European Silver Fir"
+
+
+def test_normalize_plant_mature_size_from_dimensions():
+    species = _species(1)
+    species["dimensions"] = [{"type": "Height", "min_value": 45, "max_value": 60, "unit": "feet"}]
+    plant = normalize_plant(species)
+    assert plant["matureSize"] == "Height: 45–60 feet"
+
+
+def test_normalize_plant_mature_size_unknown_when_no_dimensions():
+    plant = normalize_plant(_species(1))
+    assert plant["matureSize"] == "Unknown"
+
+
+def test_normalize_plant_soil_types_are_trimmed():
+    species = _species(1)
+    species["soil"] = ["Acidic", " Rocky ", " gravelly ", ""]
+    plant = normalize_plant(species)
+    assert plant["soilTypes"] == ["Acidic", "Rocky", "gravelly"]
 
 
 @patch("app.perenual_client.requests.get")
@@ -82,6 +131,31 @@ def test_search_plants_zone_filters_out_of_range_candidates(mock_get, app):
         results = search_plants(zone="7")
 
     assert [p["id"] for p in results] == ["1"]
+
+
+@patch("app.perenual_client.requests.get")
+def test_search_plants_zone_caps_detail_calls_at_ten(mock_get, app):
+    detail_calls = []
+
+    def fake_get(url, params, timeout):
+        response = Mock()
+        response.raise_for_status = Mock()
+        if url.endswith("/species-list"):
+            response.json = lambda: {
+                "data": [_species(i) for i in range(1, 16)],  # 15 candidates
+                "last_page": 1,
+            }
+        else:
+            detail_calls.append(url)
+            response.json = lambda: _details(1, 5, 9)
+        return response
+
+    mock_get.side_effect = fake_get
+
+    with app.app_context():
+        search_plants(zone="7")
+
+    assert len(detail_calls) == 10
 
 
 @patch("app.perenual_client.requests.get")

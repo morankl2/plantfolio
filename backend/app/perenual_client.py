@@ -22,14 +22,6 @@ SUNLIGHT_UI_TO_PERENUAL = {
     "Shade": "full_shade",
 }
 
-SUNLIGHT_PERENUAL_TO_UI = {
-    "full_sun": "Full Sun",
-    "sun-part_shade": "Full Sun",
-    "part_shade": "Partial",
-    "part_sun": "Partial",
-    "full_shade": "Shade",
-}
-
 
 class PerenualError(RuntimeError):
     """Raised when the Perenual API can't be reached or returns bad data."""
@@ -61,9 +53,22 @@ def _get(path: str, params: dict) -> dict:
 
 
 def _normalize_sunlight(raw_sunlight) -> str:
+    """Perenual's `sunlight` field is a loosely-formatted list of strings
+    (observed: "full sun", "Full sun", "part shade", "filtered shade" — an
+    earlier version of this matched against underscored enum values like
+    "full_sun", which never matched real data and silently defaulted every
+    plant to "Partial"). Match on substrings instead of an exact enum.
+    """
     if isinstance(raw_sunlight, list) and raw_sunlight:
         raw_sunlight = raw_sunlight[0]
-    return SUNLIGHT_PERENUAL_TO_UI.get(raw_sunlight, "Partial")
+    if not isinstance(raw_sunlight, str):
+        return "Partial"
+    value = raw_sunlight.strip().lower()
+    if "shade" in value and "part" not in value and "sun" not in value:
+        return "Shade"
+    if "full" in value and "sun" in value:
+        return "Full Sun"
+    return "Partial"
 
 
 def _format_zones(hardiness: dict | None) -> str:
@@ -72,12 +77,21 @@ def _format_zones(hardiness: dict | None) -> str:
     return f"{hardiness['min']}–{hardiness['max']}"
 
 
-def _format_mature_size(dimension: dict | None) -> str:
-    if not dimension or not dimension.get("max_value"):
+def _format_mature_size(dimensions: list | None) -> str:
+    # The field is `dimensions` (plural) — a list of {type, min_value,
+    # max_value, unit}, typically one entry for "Height". An earlier version
+    # read a `dimension` (singular) key that Perenual doesn't return, so this
+    # always fell through to "Unknown" regardless of the plant.
+    if not dimensions:
+        return "Unknown"
+    dimension = dimensions[0]
+    if not dimension.get("max_value"):
         return "Unknown"
     unit = dimension.get("unit", "")
     min_value = dimension.get("min_value", dimension["max_value"])
-    return f"{min_value}–{dimension['max_value']} {unit}".strip()
+    label = dimension.get("type", "")
+    size = f"{min_value}–{dimension['max_value']} {unit}".strip()
+    return f"{label}: {size}" if label else size
 
 
 def normalize_plant(species: dict, details: dict | None = None) -> dict:
@@ -88,21 +102,25 @@ def normalize_plant(species: dict, details: dict | None = None) -> dict:
     scientific_names = merged.get("scientific_name") or []
     image = merged.get("default_image") or {}
     hardiness = merged.get("hardiness")
+    # Perenual's common_name casing is inconsistent across species (crowd-
+    # sourced data) — title-case it rather than passing it through as-is.
+    common_name = merged.get("common_name")
 
     return {
         "id": str(merged["id"]),
-        "commonName": merged.get("common_name") or (scientific_names[0] if scientific_names else "Unknown plant"),
+        "commonName": (common_name.title() if common_name else None)
+        or (scientific_names[0] if scientific_names else "Unknown plant"),
         "latinName": scientific_names[0] if scientific_names else "",
         "imageUrl": image.get("regular_url") or image.get("medium_url") or image.get("thumbnail") or "",
         "sunlight": _normalize_sunlight(merged.get("sunlight")),
-        "soilTypes": merged.get("soil", []) or [],
+        "soilTypes": [s.strip() for s in (merged.get("soil") or []) if s.strip()],
         "zones": _format_zones(hardiness),
         "native": False,
         "flowering": bool(merged.get("flowers", False)),
         "edible": bool(merged.get("edible_fruit") or merged.get("edible_leaf") or merged.get("edible", False)),
         "description": merged.get("description") or "",
         "water": (merged.get("watering") or "Unknown"),
-        "matureSize": _format_mature_size(merged.get("dimension")),
+        "matureSize": _format_mature_size(merged.get("dimensions")),
         "bloomSeason": merged.get("flowering_season") or "Unknown",
         "tags": [t for t in [merged.get("cycle")] if t],
     }
@@ -113,10 +131,18 @@ def get_plant_details(plant_id: str) -> dict:
     return normalize_plant(data, data)
 
 
+ZONE_CANDIDATE_LIMIT = 10
+
+
 def search_plants(sunlight: list[str] | None = None, edible: bool | None = None, zone: str | None = None, page_limit: int = 1) -> list[dict]:
     """Search Perenual, narrowing server-side on what it supports and
     (when a zone is given) enforcing an inclusive hardiness-range match
     client-side, since Perenual's own filter does not do that.
+
+    Zone matching costs one extra API call per candidate (to read its
+    hardiness range), so when a zone is given the candidate list is capped
+    to ZONE_CANDIDATE_LIMIT before fanning out those calls, rather than
+    checking every result from the search.
     """
     params: dict = {}
     if sunlight:
@@ -143,7 +169,7 @@ def search_plants(sunlight: list[str] | None = None, edible: bool | None = None,
         return [normalize_plant(species) for species in results]
 
     matches: list[dict] = []
-    for species in results:
+    for species in results[:ZONE_CANDIDATE_LIMIT]:
         details = get_plant_details(str(species["id"]))
         plant_zones = details.get("zones", "Unknown")
         if plant_zones == "Unknown":
