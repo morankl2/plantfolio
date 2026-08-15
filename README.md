@@ -97,6 +97,8 @@ flask --app run.py run
 The API is now available at `http://127.0.0.1:5000`. `.env` is excluded from
 version control via `.gitignore` — **never commit real API keys or secrets**.
 
+**Perenual's free tier is 100 requests/day**, easy to burn through while developing (a single zone-filtered search can cost over a dozen calls). Set `MOCK_PERENUAL=true` in `.env` to serve local fixture data (`backend/app/mock_data.py`, 15 varied species) instead of calling the real API — every filter, the zone-range logic, and the normalization pipeline all run exactly the same way, just against local data. Set it back to `false` (or remove it) to test against real Perenual data. Requires a backend restart to take effect (env vars load once at startup).
+
 ### 3. Frontend setup
 
 In a second terminal:
