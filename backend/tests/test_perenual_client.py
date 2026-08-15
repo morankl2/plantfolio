@@ -159,6 +159,31 @@ def test_search_plants_zone_caps_detail_calls_at_ten(mock_get, app):
 
 
 @patch("app.perenual_client.requests.get")
+def test_search_plants_zone_pulls_multiple_list_pages(mock_get, app):
+    list_pages_requested = []
+
+    def fake_get(url, params, timeout):
+        response = Mock()
+        response.raise_for_status = Mock()
+        if url.endswith("/species-list"):
+            list_pages_requested.append(params["page"])
+            response.json = lambda: {
+                "data": [_species(params["page"] * 100 + i) for i in range(30)],
+                "last_page": 5,  # plenty more pages available than we should fetch
+            }
+        else:
+            response.json = lambda: _details(1, 5, 9)
+        return response
+
+    mock_get.side_effect = fake_get
+
+    with app.app_context():
+        search_plants(zone="7")
+
+    assert list_pages_requested == [1, 2, 3]
+
+
+@patch("app.perenual_client.requests.get")
 def test_get_plant_details(mock_get, app):
     mock_get.return_value = Mock(
         status_code=200, json=lambda: _details(1, 4, 8)
@@ -190,3 +215,30 @@ def test_rate_limit_raises_friendly_message(mock_get, app):
     with app.app_context():
         with pytest.raises(PerenualError, match="API limit exceeded at the moment. Please try again in 1 hour"):
             search_plants()
+
+
+@patch("app.perenual_client.requests.get")
+def test_mock_mode_never_calls_the_network(mock_get, app):
+    app.config["MOCK_PERENUAL"] = True
+
+    with app.app_context():
+        results = search_plants()
+        assert len(results) == 15  # all of MOCK_SPECIES
+
+        edible_only = search_plants(edible=True)
+        assert all(p["edible"] for p in edible_only)
+
+        zone_7 = search_plants(zone="7")
+        assert all(p["zones"] != "Unknown" for p in zone_7)
+
+        detail = get_plant_details("1")
+        assert detail["commonName"] == "European Silver Fir"
+
+    mock_get.assert_not_called()
+
+
+def test_mock_mode_unknown_id_raises_perenual_error(app):
+    app.config["MOCK_PERENUAL"] = True
+    with app.app_context():
+        with pytest.raises(PerenualError):
+            get_plant_details("does-not-exist")

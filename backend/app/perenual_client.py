@@ -16,6 +16,8 @@ from __future__ import annotations
 import requests
 from flask import current_app
 
+from app.mock_data import MOCK_SPECIES
+
 SUNLIGHT_UI_TO_PERENUAL = {
     "Full Sun": "full_sun",
     "Partial": "part_shade",
@@ -127,11 +129,58 @@ def normalize_plant(species: dict, details: dict | None = None) -> dict:
 
 
 def get_plant_details(plant_id: str) -> dict:
+    if current_app.config.get("MOCK_PERENUAL"):
+        record = next((s for s in MOCK_SPECIES if str(s["id"]) == str(plant_id)), None)
+        if record is None:
+            raise PerenualError(f"No mock species with id {plant_id}")
+        return normalize_plant(record, record)
     data = _get(f"/species/details/{plant_id}", {})
     return normalize_plant(data, data)
 
 
+def _mock_search(sunlight: list[str] | None, edible: bool | None, zone: str | None) -> list[dict]:
+    records = MOCK_SPECIES
+    if sunlight:
+        records = [r for r in records if _normalize_sunlight(r.get("sunlight")) in sunlight]
+    if edible:
+        records = [r for r in records if r.get("edible_fruit") or r.get("edible_leaf")]
+
+    plants = [normalize_plant(r, r) for r in records]
+    if not zone:
+        return plants
+
+    try:
+        zone_number = int("".join(ch for ch in zone if ch.isdigit()))
+    except ValueError:
+        return plants
+
+    matches = []
+    for plant in plants:
+        if plant["zones"] == "Unknown":
+            continue
+        low, high = plant["zones"].split("–")
+        if int(low) <= zone_number <= int(high):
+            matches.append(plant)
+    return matches
+
+
 ZONE_CANDIDATE_LIMIT = 10
+# Perenual's species-list is alphabetically ordered with no query/filters, so
+# page 1 alone is always the same narrow slice (genus Abies, then Acer, ...).
+# Zone searches pull a few more (cheap, list-level) pages to sample from a
+# wider slice of the alphabet before spending the expensive per-candidate
+# detail calls.
+ZONE_SEARCH_PAGES = 3
+
+
+def _spread_sample(items: list, count: int) -> list:
+    """Evenly-spaced sample across items, rather than just the first `count`
+    — see ZONE_SEARCH_PAGES docstring for why "first N" undersamples badly.
+    """
+    if len(items) <= count:
+        return items
+    step = len(items) / count
+    return [items[int(i * step)] for i in range(count)]
 
 
 def search_plants(sunlight: list[str] | None = None, edible: bool | None = None, zone: str | None = None, page_limit: int = 1) -> list[dict]:
@@ -140,10 +189,13 @@ def search_plants(sunlight: list[str] | None = None, edible: bool | None = None,
     client-side, since Perenual's own filter does not do that.
 
     Zone matching costs one extra API call per candidate (to read its
-    hardiness range), so when a zone is given the candidate list is capped
-    to ZONE_CANDIDATE_LIMIT before fanning out those calls, rather than
-    checking every result from the search.
+    hardiness range), so when a zone is given the candidate pool is spread-
+    sampled down to ZONE_CANDIDATE_LIMIT before fanning out those calls,
+    rather than checking every result from the search.
     """
+    if current_app.config.get("MOCK_PERENUAL"):
+        return _mock_search(sunlight, edible, zone)
+
     params: dict = {}
     if sunlight:
         perenual_values = [SUNLIGHT_UI_TO_PERENUAL[s] for s in sunlight if s in SUNLIGHT_UI_TO_PERENUAL]
@@ -152,8 +204,10 @@ def search_plants(sunlight: list[str] | None = None, edible: bool | None = None,
     if edible:
         params["edible"] = 1
 
+    pages_to_fetch = ZONE_SEARCH_PAGES if zone else page_limit
+
     results: list[dict] = []
-    for page in range(1, page_limit + 1):
+    for page in range(1, pages_to_fetch + 1):
         payload = _get("/species-list", {**params, "page": page})
         page_results = payload.get("data", [])
         results.extend(page_results)
@@ -169,7 +223,7 @@ def search_plants(sunlight: list[str] | None = None, edible: bool | None = None,
         return [normalize_plant(species) for species in results]
 
     matches: list[dict] = []
-    for species in results[:ZONE_CANDIDATE_LIMIT]:
+    for species in _spread_sample(results, ZONE_CANDIDATE_LIMIT):
         details = get_plant_details(str(species["id"]))
         plant_zones = details.get("zones", "Unknown")
         if plant_zones == "Unknown":

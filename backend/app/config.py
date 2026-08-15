@@ -15,6 +15,10 @@ class Config:
     GOOGLE_CLIENT_ID = os.environ.get("GOOGLE_CLIENT_ID", "")
     SECRET_KEY = os.environ.get("SECRET_KEY", "")
     FRONTEND_ORIGIN = os.environ.get("FRONTEND_ORIGIN", "http://localhost:5173")
+    # When true, perenual_client.py serves local fixture data (mock_data.py)
+    # instead of calling the real Perenual API — for developing/testing the
+    # UI without spending the free tier's 100-requests/day quota.
+    MOCK_PERENUAL = os.environ.get("MOCK_PERENUAL", "false").lower() == "true"
 
 
 class TestConfig(Config):
