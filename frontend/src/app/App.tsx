@@ -2827,6 +2827,45 @@ function AboutPage() {
         to search, compare, and keep track of the plants I actually want to grow.
       </p>
 
+      <div
+        style={{
+          display: "grid",
+          gridTemplateColumns: "1fr 1fr",
+          gap: 10,
+          marginBottom: 8,
+        }}
+      >
+        {[
+          { src: "/about/black-eyed-susan.jpg", alt: "A black-eyed Susan blooming in the garden" },
+          { src: "/about/bee-on-coneflower.jpg", alt: "A bumblebee visiting a coneflower" },
+          { src: "/about/coneflowers.jpg", alt: "A cluster of purple coneflowers in bloom" },
+          { src: "/about/squash-blossom.jpg", alt: "A squash blossom in the vegetable bed" },
+        ].map((img) => (
+          <img
+            key={img.src}
+            src={img.src}
+            alt={img.alt}
+            style={{
+              width: "100%",
+              aspectRatio: "1 / 1",
+              objectFit: "cover",
+              borderRadius: 14,
+            }}
+          />
+        ))}
+      </div>
+      <p
+        style={{
+          fontFamily: "'Public Sans', sans-serif",
+          fontSize: 12,
+          color: "#9CAF88",
+          textAlign: "center",
+          marginBottom: 28,
+        }}
+      >
+        A few things blooming in my own yard this summer.
+      </p>
+
       <h2
         style={{
           fontFamily: "'Fraunces', Georgia, serif",
