@@ -8,9 +8,10 @@ dimensions is a list, flowering_season is usually null, etc. This lets the
 whole filter/normalize pipeline run unmodified against realistic data with
 zero API calls, for local UI development and testing.
 
-Image URLs are intentionally blank — Perenual's image URLs are short-lived
-signed S3 links, not worth faking here. Expect broken image icons in mock
-mode; that's expected, not a bug.
+Images live in frontend/public/mock-plants/ (served by the frontend, so the
+relative URL resolves correctly regardless of where the backend is deployed)
+and are sourced from Wikipedia/Wikimedia Commons — see
+frontend/public/mock-plants/ATTRIBUTIONS.md for licensing per image.
 """
 
 from __future__ import annotations
@@ -31,7 +32,7 @@ MOCK_SPECIES: list[dict] = [
         "flowering_season": None,
         "edible_fruit": False,
         "edible_leaf": False,
-        "default_image": {},
+        "default_image": {"regular_url": "/mock-plants/abies-alba.jpg"},
     },
     {
         "id": 2,
@@ -48,7 +49,7 @@ MOCK_SPECIES: list[dict] = [
         "flowering_season": "Summer",
         "edible_fruit": False,
         "edible_leaf": False,
-        "default_image": {},
+        "default_image": {"regular_url": "/mock-plants/echinacea-purpurea.jpg"},
     },
     {
         "id": 3,
@@ -65,7 +66,7 @@ MOCK_SPECIES: list[dict] = [
         "flowering_season": "Spring",
         "edible_fruit": True,
         "edible_leaf": False,
-        "default_image": {},
+        "default_image": {"regular_url": "/mock-plants/vaccinium-corymbosum.jpg"},
     },
     {
         "id": 4,
@@ -82,7 +83,7 @@ MOCK_SPECIES: list[dict] = [
         "flowering_season": "Summer",
         "edible_fruit": False,
         "edible_leaf": False,
-        "default_image": {},
+        "default_image": {"regular_url": "/mock-plants/hosta-sieboldiana.jpg"},
     },
     {
         "id": 5,
@@ -99,7 +100,7 @@ MOCK_SPECIES: list[dict] = [
         "flowering_season": None,
         "edible_fruit": False,
         "edible_leaf": True,
-        "default_image": {},
+        "default_image": {"regular_url": "/mock-plants/ocimum-basilicum.jpg"},
     },
     {
         "id": 6,
@@ -116,7 +117,7 @@ MOCK_SPECIES: list[dict] = [
         "flowering_season": None,
         "edible_fruit": False,
         "edible_leaf": False,
-        "default_image": {},
+        "default_image": {"regular_url": "/mock-plants/polystichum-acrostichoides.jpg"},
     },
     {
         "id": 7,
@@ -133,7 +134,7 @@ MOCK_SPECIES: list[dict] = [
         "flowering_season": "Spring",
         "edible_fruit": True,
         "edible_leaf": False,
-        "default_image": {},
+        "default_image": {"regular_url": "/mock-plants/amelanchier-canadensis.jpg"},
     },
     {
         "id": 8,
@@ -150,7 +151,7 @@ MOCK_SPECIES: list[dict] = [
         "flowering_season": "Summer",
         "edible_fruit": False,
         "edible_leaf": True,
-        "default_image": {},
+        "default_image": {"regular_url": "/mock-plants/lavandula-angustifolia.jpg"},
     },
     {
         "id": 9,
@@ -167,7 +168,7 @@ MOCK_SPECIES: list[dict] = [
         "flowering_season": None,
         "edible_fruit": False,
         "edible_leaf": False,
-        "default_image": {},
+        "default_image": {"regular_url": "/mock-plants/acer-palmatum.jpg"},
     },
     {
         "id": 10,
@@ -184,7 +185,7 @@ MOCK_SPECIES: list[dict] = [
         "flowering_season": "Summer",
         "edible_fruit": True,
         "edible_leaf": False,
-        "default_image": {},
+        "default_image": {"regular_url": "/mock-plants/solanum-lycopersicum.jpg"},
     },
     {
         "id": 11,
@@ -201,7 +202,7 @@ MOCK_SPECIES: list[dict] = [
         "flowering_season": None,
         "edible_fruit": False,
         "edible_leaf": False,
-        "default_image": {},
+        "default_image": {"regular_url": "/mock-plants/buxus-sempervirens.jpg"},
     },
     {
         "id": 12,
@@ -218,7 +219,7 @@ MOCK_SPECIES: list[dict] = [
         "flowering_season": "Summer to Fall",
         "edible_fruit": False,
         "edible_leaf": False,
-        "default_image": {},
+        "default_image": {"regular_url": "/mock-plants/rudbeckia-hirta.jpg"},
     },
     {
         "id": 13,
@@ -235,7 +236,7 @@ MOCK_SPECIES: list[dict] = [
         "flowering_season": "Summer",
         "edible_fruit": False,
         "edible_leaf": True,
-        "default_image": {},
+        "default_image": {"regular_url": "/mock-plants/mentha-piperita.jpg"},
     },
     {
         "id": 14,
@@ -252,7 +253,7 @@ MOCK_SPECIES: list[dict] = [
         "flowering_season": None,
         "edible_fruit": False,
         "edible_leaf": True,
-        "default_image": {},
+        "default_image": {"regular_url": "/mock-plants/salvia-rosmarinus.jpg"},
     },
     {
         "id": 15,
@@ -269,6 +270,6 @@ MOCK_SPECIES: list[dict] = [
         "flowering_season": "Spring",
         "edible_fruit": False,
         "edible_leaf": False,
-        "default_image": {},
+        "default_image": {"regular_url": "/mock-plants/rhododendron-catawbiense.jpg"},
     },
 ]
