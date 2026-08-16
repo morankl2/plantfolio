@@ -24,11 +24,11 @@ SAMPLE_PLANT = {
 def test_list_plants_returns_json(mock_search, client):
     mock_search.return_value = [SAMPLE_PLANT]
 
-    response = client.get("/api/plants?sunlight=Full+Sun&zone=7")
+    response = client.get("/api/plants?sunlight=Full+Sun&zone=7&mock=false")
 
     assert response.status_code == 200
     assert response.get_json() == [SAMPLE_PLANT]
-    mock_search.assert_called_once_with(sunlight=["Full Sun"], edible=None, zone="7")
+    mock_search.assert_called_once_with(sunlight=["Full Sun"], edible=None, zone="7", mock=False)
 
 
 @patch("app.routes.plants.search_plants")
@@ -51,4 +51,4 @@ def test_get_plant_returns_json(mock_details, client):
 
     assert response.status_code == 200
     assert response.get_json() == SAMPLE_PLANT
-    mock_details.assert_called_once_with("1")
+    mock_details.assert_called_once_with("1", mock=None)

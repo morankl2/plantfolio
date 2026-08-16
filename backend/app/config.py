@@ -27,3 +27,7 @@ class TestConfig(Config):
     PERENUAL_API_KEY = "test-key"
     GOOGLE_CLIENT_ID = "test-client-id.apps.googleusercontent.com"
     SECRET_KEY = "test-secret-key"
+    # Explicit, not inherited from .env — tests must be deterministic
+    # regardless of the developer's local MOCK_PERENUAL setting. Tests that
+    # want mock mode set app.config["MOCK_PERENUAL"] = True themselves.
+    MOCK_PERENUAL = False

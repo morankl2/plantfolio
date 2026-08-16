@@ -62,6 +62,10 @@ interface AppCtx {
   // first mount) — sidebar edits alone never bump it.
   searchTrigger: number;
   bumpSearchTrigger: () => void;
+  // Drives local fixture data (zero Perenual API calls) vs. the real API.
+  // Defaults on so casual use/testing never burns quota by accident.
+  testMode: boolean;
+  toggleTestMode: () => void;
   cachePlants: (plants: Plant[]) => void;
   getPlantsForList: (list: PlantList) => Plant[];
   getCachedPlants: () => Plant[];
@@ -98,6 +102,10 @@ function AppProvider({ children }: { children: ReactNode }) {
   const [filters, setFiltersState] = useState<FilterState>(FILTER_DEFAULTS);
   const [draftFilters, setDraftFiltersState] = useState<SidebarFilters>(SIDEBAR_FILTER_DEFAULTS);
   const [searchTrigger, setSearchTrigger] = useState(0);
+  const [testMode, setTestMode] = useState(() => {
+    const stored = localStorage.getItem("plantfolio_test_mode");
+    return stored === null ? true : stored === "true";
+  });
   const [plantsCache, setPlantsCache] = useState<Map<string, Plant>>(new Map());
 
   // Restores the signed-in state from the backend session cookie (if any) on
@@ -178,6 +186,13 @@ function AppProvider({ children }: { children: ReactNode }) {
     },
     searchTrigger,
     bumpSearchTrigger: () => setSearchTrigger((n) => n + 1),
+    testMode,
+    toggleTestMode: () =>
+      setTestMode((prev) => {
+        const next = !prev;
+        localStorage.setItem("plantfolio_test_mode", String(next));
+        return next;
+      }),
     cachePlants,
     getPlantsForList,
     getCachedPlants,
@@ -206,7 +221,7 @@ function PlantfolioLogo({ size = 28 }: { size?: number }) {
 // ─── Header ───────────────────────────────────────────────────────────────────
 
 function Header() {
-  const { page, setPage, isSignedIn, currentUser } = useApp();
+  const { page, setPage, isSignedIn, currentUser, testMode, toggleTestMode } = useApp();
   const active = page.name;
   const initials = (currentUser?.name ?? currentUser?.email ?? "?")
     .split(" ")
@@ -298,6 +313,43 @@ function Header() {
 
       {/* Secondary nav */}
       <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+        <button
+          onClick={toggleTestMode}
+          title={
+            testMode
+              ? "Test mode: using local sample data. Click to switch to the live Perenual API."
+              : "Live mode: using the real Perenual API. Click to switch to local sample data."
+          }
+          style={{
+            display: "flex",
+            alignItems: "center",
+            gap: 5,
+            background: "none",
+            border: "none",
+            cursor: "pointer",
+            padding: "4px 6px",
+            opacity: 0.5,
+          }}
+        >
+          <span
+            style={{
+              width: 6,
+              height: 6,
+              borderRadius: "50%",
+              backgroundColor: testMode ? "#9CAF88" : "#C77B4D",
+              flexShrink: 0,
+            }}
+          />
+          <span
+            style={{
+              fontFamily: "'Public Sans', sans-serif",
+              fontSize: 10,
+              color: "rgba(246,241,231,0.7)",
+            }}
+          >
+            {testMode ? "Test data" : "Live API"}
+          </span>
+        </button>
         <NavLink target="support" label="Support" />
         <NavLink target="about" label="About" />
 
@@ -1228,8 +1280,16 @@ function FilterSidebar() {
 // ─── Discover Page ────────────────────────────────────────────────────────────
 
 function DiscoverPage() {
-  const { filters, setFilters, setDraftFilters, clearFilters, cachePlants, searchTrigger, bumpSearchTrigger } =
-    useApp();
+  const {
+    filters,
+    setFilters,
+    setDraftFilters,
+    clearFilters,
+    cachePlants,
+    searchTrigger,
+    bumpSearchTrigger,
+    testMode,
+  } = useApp();
   const [plants, setPlants] = useState<Plant[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -1251,11 +1311,14 @@ function DiscoverPage() {
     let cancelled = false;
     setLoading(true);
     setError(null);
-    fetchPlants({
-      sunlight: [...filters.sunlight],
-      edible: filters.edibleOnly,
-      zone: filters.zone || undefined,
-    })
+    fetchPlants(
+      {
+        sunlight: [...filters.sunlight],
+        edible: filters.edibleOnly,
+        zone: filters.zone || undefined,
+      },
+      testMode
+    )
       .then((results) => {
         if (cancelled) return;
         setPlants(results);
@@ -1627,7 +1690,7 @@ function DiscoverPage() {
 // ─── Plant Detail Page ────────────────────────────────────────────────────────
 
 function PlantDetailPage({ plantId }: { plantId: string }) {
-  const { isSaved, toggleSave, isSignedIn, setPage, cachePlants, getCachedPlants } = useApp();
+  const { isSaved, toggleSave, isSignedIn, setPage, cachePlants, getCachedPlants, testMode } = useApp();
   const [plant, setPlant] = useState<Plant | null>(null);
   const [notFound, setNotFound] = useState(false);
   const [saveOpen, setSaveOpen] = useState(false);
@@ -1637,7 +1700,7 @@ function PlantDetailPage({ plantId }: { plantId: string }) {
     let cancelled = false;
     setPlant(null);
     setNotFound(false);
-    fetchPlantById(plantId)
+    fetchPlantById(plantId, testMode)
       .then((result) => {
         if (cancelled) return;
         setPlant(result);

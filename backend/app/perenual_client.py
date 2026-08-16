@@ -128,8 +128,12 @@ def normalize_plant(species: dict, details: dict | None = None) -> dict:
     }
 
 
-def get_plant_details(plant_id: str) -> dict:
-    if current_app.config.get("MOCK_PERENUAL"):
+def _use_mock(override: bool | None) -> bool:
+    return current_app.config.get("MOCK_PERENUAL", False) if override is None else override
+
+
+def get_plant_details(plant_id: str, mock: bool | None = None) -> dict:
+    if _use_mock(mock):
         record = next((s for s in MOCK_SPECIES if str(s["id"]) == str(plant_id)), None)
         if record is None:
             raise PerenualError(f"No mock species with id {plant_id}")
@@ -183,7 +187,13 @@ def _spread_sample(items: list, count: int) -> list:
     return [items[int(i * step)] for i in range(count)]
 
 
-def search_plants(sunlight: list[str] | None = None, edible: bool | None = None, zone: str | None = None, page_limit: int = 1) -> list[dict]:
+def search_plants(
+    sunlight: list[str] | None = None,
+    edible: bool | None = None,
+    zone: str | None = None,
+    page_limit: int = 1,
+    mock: bool | None = None,
+) -> list[dict]:
     """Search Perenual, narrowing server-side on what it supports and
     (when a zone is given) enforcing an inclusive hardiness-range match
     client-side, since Perenual's own filter does not do that.
@@ -192,8 +202,12 @@ def search_plants(sunlight: list[str] | None = None, edible: bool | None = None,
     hardiness range), so when a zone is given the candidate pool is spread-
     sampled down to ZONE_CANDIDATE_LIMIT before fanning out those calls,
     rather than checking every result from the search.
+
+    `mock` overrides the app-wide MOCK_PERENUAL setting for this call —
+    used by the frontend's test-mode toggle so it can switch data sources
+    per-request without restarting the server.
     """
-    if current_app.config.get("MOCK_PERENUAL"):
+    if _use_mock(mock):
         return _mock_search(sunlight, edible, zone)
 
     params: dict = {}

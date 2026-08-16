@@ -25,19 +25,21 @@ async function errorMessage(response: Response, fallback: string): Promise<strin
   return fallback;
 }
 
-export async function fetchPlants(filters: PlantFilters = {}): Promise<Plant[]> {
+export async function fetchPlants(filters: PlantFilters = {}, testMode = true): Promise<Plant[]> {
   const params = new URLSearchParams();
   filters.sunlight?.forEach((s) => params.append("sunlight", s));
   if (filters.edible) params.set("edible", "true");
   if (filters.zone) params.set("zone", filters.zone);
+  params.set("mock", testMode ? "true" : "false");
 
   const response = await fetch(`${API_BASE_URL}/api/plants?${params.toString()}`);
   if (!response.ok) throw new Error(await errorMessage(response, `Failed to load plants (${response.status})`));
   return response.json();
 }
 
-export async function fetchPlantById(id: string): Promise<Plant> {
-  const response = await fetch(`${API_BASE_URL}/api/plants/${encodeURIComponent(id)}`);
+export async function fetchPlantById(id: string, testMode = true): Promise<Plant> {
+  const params = new URLSearchParams({ mock: testMode ? "true" : "false" });
+  const response = await fetch(`${API_BASE_URL}/api/plants/${encodeURIComponent(id)}?${params.toString()}`);
   if (!response.ok) throw new Error(await errorMessage(response, `Failed to load plant ${id} (${response.status})`));
   return response.json();
 }
