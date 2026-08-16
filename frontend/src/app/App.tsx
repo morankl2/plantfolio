@@ -2849,9 +2849,10 @@ function AboutPage() {
           marginBottom: 16,
         }}
       >
-        I garden in USDA zone 7. I was thrilled to finally be free of an HOA and its long list
-        of plant and patio restrictions, and I'm fortunate now to have a yard with real space
-        to experiment — native plants, vegetables, whatever catches my interest next.
+        I garden in USDA zone 7. When I moved to our current house, 
+        I was thrilled to finally be free of an HOA and its long list
+        of restrictions, and I'm fortunate now to have a yard with real space
+        to experiment with native plants and vegetables.
       </p>
 
       <p
@@ -2865,7 +2866,7 @@ function AboutPage() {
       >
         Native plants in particular have become a bit of an obsession, because they're such a
         clear win-win: they support the local ecosystem, and since they're already adapted to
-        this area, they need far less fuss to keep alive than the finickiest ornamentals.
+        this area, they need far less maintenance to keep alive than the finickiest ornamentals.
       </p>
 
       <p
