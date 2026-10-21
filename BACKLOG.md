@@ -131,6 +131,39 @@ After the POC has been used for a while: make `cleared` the default, and decide 
 
 ---
 
+## Feature track: My plants and the calendar
+
+Added 2026-10-20. Design and reasoning are in `docs/MY_PLANTS_DESIGN.md`. **Not yet ranked against the items above**; the owner decides when it starts. Order within the track is fixed: **PF-010, PF-011, PF-012, PF-013** (the owner reordered the phases on 2026-10-20: the calendar comes before planting dates and garden areas, because the calendar draws on plant-level data, not on personal dates).
+
+Shared prerequisite: tags and plantings belong to a signed-in user, so Google sign-in has to work (locally: a Google Client ID in both `.env` files and `http://localhost:5173` as an authorized origin; on Render: PF-008). The first part of PF-007 (sign-in set up, lists tested with cleared plants) is the natural place to do that once.
+
+### PF-010: My plants: tags, built-in lists, and the planting record
+Per-user tags on each plant: **Growing**, **Have seeds**, **Want**, **Have extra** (choosing it asks plant, seed, or both). A plant can have several at once.
+- **Built-in lists are views, not stored memberships** (owner chose "tags as built-in lists", option C): Growing, Have seeds, Want and Have extra appear on My Lists and are computed from the user's tags and plantings, so plants move on and off them by changing status. Custom lists stay as they are today (manual, a plant can be in several, added or removed any time).
+- **Growing means having at least one active planting.** In this phase, tapping Growing creates a planting with an unknown date; the date, area and removal come in PF-012. This avoids a migration later.
+- Stored in the app's own database, keyed by plant ID (user data stays apart from plant data; see `docs/DATA_INTEGRATION.md`). Needs new tables and endpoints and backend tests.
+- UI: toggle chips on the detail page (under Save), small badges on tiles, the four built-in lists on My Lists. Sign-in required, like saving to a list.
+- Plant IDs differ between sources (fixtures use "1", "2"; cleared data uses permanent UUIDs), so tags only carry meaning for the cleared source.
+- Later in this phase or just after: a "My plants" filter in the Discover sidebar.
+
+### PF-011: Plant calendar (a new tab, plant-level data)
+A Calendar tab showing, for the plants you have tagged (Growing, Have seeds, Want, Have extra), **when to sow seeds, when to prune, and when each blooms**, by month. This is general to the plant, not personal, so it needs no planting dates (PF-012).
+- **Needs new plant data from the cleared-plant-data repo (the owner will add it).** The data does not have it today. Suggested shape, following how bloom is stored now (`bloom_month` rows with `value_num` 1 to 12): new trait rows such as `sow_month` and `prune_month`, ideally keyed by region (Maryland first, like nativity), with a source on each row. A missing row means "no data", never "no". This is an added table content, so the data repo bumps its schema version by a minor step (its changelog rule), and `PLANTFOLIO_MAPPING.md` there gets a new section.
+- **Already in the data:** bloom months, for about 384 of 563 plants (mostly Maryland natives). Fruiting and harvest are not in the data yet.
+- Region: the windows are for Maryland until more regions exist. Showing the right region for other users needs the ZIP lookup (PF-002); until then the tab says "Maryland".
+- plantfolio side: read the new traits in `cleared_client.py` (new fields on the plant, hide when empty), the Calendar tab, tests with a fixture. The reader already tolerates a higher minor schema version.
+- Data repo items that relate: BL-010 (crop growing data, planting windows) and BL-020 (frost dates per ZIP).
+
+### PF-012: Planting dates and garden areas
+Turn the planting record from PF-010 into something with detail: **planted-on date** (seed or plant), **garden area**, optional **removed-on date**, quantity, notes. Users create named **garden areas** ("Front bed", "Back fence") and pick one per planting. Seeds can be given a planted date too.
+- The calendar (PF-011) then overlays the user's own planting dates on the plant-level windows.
+- Map coordinates for a planting are **not** part of this item. If added later, they are private by default (they locate a home), shown to no one else, and not needed for the calendar.
+
+### PF-013: Predictions for your plantings
+From a planting date plus plant data, show when a planting should start blooming, fruiting and be ready to harvest, and when to prune. Needs data the data repo does not have yet (days to bloom or maturity per plant; frost dates per ZIP, its BL-010 and BL-020; hardiness zones, its BL-018) and the ZIP region from PF-002. Last because it depends on the most data work.
+
+---
+
 ## Known gaps in the data (handled in the data repo, not here)
 
 Watch these during POC-7. They are the data repo's to fix, and the UI must simply tolerate them:
