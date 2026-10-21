@@ -13,6 +13,7 @@ export interface Plant {
   imageCredit?: string;
   imageLicense?: string;
   imageLicenseUrl?: string;
+  imagePageUrl?: string;
   // Perenual/mock plants have one `sunlight` value. Cleared plants list every
   // tag in `sunlightTags` and may have none ("no data").
   sunlight?: Sunlight | null;

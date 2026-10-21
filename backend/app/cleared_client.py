@@ -14,6 +14,7 @@ empty string / empty list / None here, and the frontend hides the element.
 from __future__ import annotations
 
 import pathlib
+import re
 import sqlite3
 from contextlib import closing
 
@@ -38,7 +39,8 @@ SELECT v.*,
        ph.url_large AS photo_large,
        ph.attribution AS photo_attribution,
        ph.license_name AS photo_license,
-       ph.license_url AS photo_license_url
+       ph.license_url AS photo_license_url,
+       ph.page_url AS photo_page_url
 FROM plant_traits v
 LEFT JOIN photos ph ON ph.plant_id = v.plant_id AND ph.position = 1
 """
@@ -85,6 +87,23 @@ def _check_schema(conn: sqlite3.Connection) -> None:
             f"The cleared plant database has schema version {row['value']}; "
             f"this app reads major version(s) {sorted(SUPPORTED_SCHEMA_MAJORS)} only"
         )
+
+
+def normalize_query(text: str | None) -> str:
+    """Normalize what the user typed the way the data repo normalizes names
+    (`names.name_normalized`): lower case, hyphens turned into spaces, apostrophes
+    and the hybrid sign removed, spaces collapsed. "Black-eyed Susan" and
+    "black eyed  susan" both become "black eyed susan"."""
+    if not text:
+        return ""
+    cleaned = text.lower().replace("-", " ").replace("'", "").replace("\u2019", "").replace("\u00d7", " ")
+    return re.sub(r"\s+", " ", cleaned).strip()
+
+
+def _like_pattern(text: str) -> str:
+    """A LIKE pattern that matches `text` anywhere, with %, _ and the escape character taken literally."""
+    escaped = text.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+    return f"%{escaped}%"
 
 
 def _number(value: float) -> str:
@@ -138,6 +157,7 @@ def normalize_plant(row: sqlite3.Row, detail: bool = False) -> dict:
         "imageCredit": row["photo_attribution"] or "",
         "imageLicense": row["photo_license"] or "",
         "imageLicenseUrl": row["photo_license_url"] or "",
+        "imagePageUrl": row["photo_page_url"] or "",
         "sunlight": sunlight_tags[0] if sunlight_tags else None,
         "sunlightTags": sunlight_tags,
         "soilTypes": [],
@@ -159,12 +179,16 @@ def search_plants(
     sunlight: list[str] | None = None,
     edible: bool | None = None,
     zone: str | None = None,
+    query: str | None = None,
 ) -> list[dict]:
     """Filter the cleared plants. `zone` is accepted and ignored: the data has
     no hardiness zones (the frontend hides the zone control for this source).
 
     Selected sunlight labels match plants that have ANY of those tags, like the
-    other sources.
+    other sources. `query` is a name search: the normalized text must appear in
+    any of the plant's names (common names, Latin names, old Latin names and
+    aliases, all in the `names` table), so "black eyed susan" finds a plant
+    whose displayed name is "Blackeyed Susan".
     """
     where: list[str] = []
     params: list[str] = []
@@ -179,6 +203,13 @@ def search_plants(
         params.extend(tags)
     if edible:
         where.append("v.edible = 'yes'")
+    normalized = normalize_query(query)
+    if normalized:
+        where.append(
+            "EXISTS (SELECT 1 FROM names n WHERE n.plant_id = v.plant_id "
+            "AND n.name_normalized LIKE ? ESCAPE '\\')"
+        )
+        params.append(_like_pattern(normalized))
 
     sql = _PLANT_QUERY + (f"WHERE {' AND '.join(where)} " if where else "") + "ORDER BY lower(v.common_name)"
     with closing(_connect()) as conn:

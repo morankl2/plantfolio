@@ -52,11 +52,16 @@ def list_plants():
     sunlight = request.args.getlist("sunlight")
     edible = request.args.get("edible", "").lower() in ("1", "true", "yes")
     zone = request.args.get("zone") or None
+    query = request.args.get("q", "").strip() or None
     source = _requested_source()
 
     try:
         if source == "cleared":
-            plants = cleared_client.search_plants(sunlight=sunlight or None, edible=edible or None, zone=zone)
+            # Name search happens here for the cleared data. The other sources do not
+            # take `q`; the frontend still filters those by name in the browser.
+            plants = cleared_client.search_plants(
+                sunlight=sunlight or None, edible=edible or None, zone=zone, query=query
+            )
         else:
             plants = search_plants(
                 sunlight=sunlight or None, edible=edible or None, zone=zone, mock=_mock_override(source)

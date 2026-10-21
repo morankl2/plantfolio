@@ -6,6 +6,9 @@ export interface PlantFilters {
   sunlight?: string[];
   edible?: boolean;
   zone?: string;
+  // Name search. Only the cleared source searches by name on the server; for
+  // the others the page filters the returned plants by name itself.
+  query?: string;
 }
 
 export interface AuthUser {
@@ -38,6 +41,7 @@ export async function fetchPlants(filters: PlantFilters = {}, source: PlantSourc
   filters.sunlight?.forEach((s) => params.append("sunlight", s));
   if (filters.edible) params.set("edible", "true");
   if (filters.zone) params.set("zone", filters.zone);
+  if (source === "cleared" && filters.query?.trim()) params.set("q", filters.query.trim());
   sourceParams(params, source);
 
   const response = await fetch(`${API_BASE_URL}/api/plants?${params.toString()}`);

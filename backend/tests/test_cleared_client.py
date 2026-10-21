@@ -18,6 +18,7 @@ SCHEMA = """
 CREATE TABLE meta (key TEXT PRIMARY KEY, value TEXT);
 CREATE TABLE plants (plant_id TEXT PRIMARY KEY, scientific_name TEXT, common_name TEXT);
 CREATE TABLE traits (plant_id TEXT, trait TEXT, value TEXT, value_num REAL, basis TEXT, confidence TEXT);
+CREATE TABLE names (plant_id TEXT NOT NULL, name TEXT NOT NULL, name_normalized TEXT NOT NULL, kind TEXT NOT NULL, source_id TEXT, source_key TEXT);
 CREATE TABLE plant_regions (plant_id TEXT, region TEXT, nativity TEXT);
 CREATE TABLE photos (plant_id TEXT NOT NULL, position INTEGER NOT NULL, source_id TEXT, photo_id TEXT,
   url_medium TEXT, url_large TEXT, page_url TEXT, license_name TEXT, license_url TEXT, attribution TEXT,
@@ -87,6 +88,21 @@ def build_db(path, schema_version="1.0.1"):
     trait(TOMATO, "duration", "Annual")
     trait(TOMATO, "duration", "Perennial")
 
+    # name_normalized as the data repo builds it: lower case, hyphens -> spaces, apostrophes removed.
+    conn.executemany(
+        "INSERT INTO names (plant_id, name, name_normalized, kind) VALUES (?, ?, ?, ?)",
+        [
+            (SUNNY, "Sunny coneflower", "sunny coneflower", "common"),
+            (SUNNY, "Sun-lover's daisy", "sun lovers daisy", "common"),
+            (SUNNY, "Echinacea fakeii L.", "echinacea fakeii", "scientific"),
+            (SUNNY, "Rudbeckia oldname", "rudbeckia oldname", "synonym"),
+            (SHADY, "Shady fern", "shady fern", "common"),
+            (SHADY, "Polystichum fakeii", "polystichum fakeii", "scientific"),
+            (TOMATO, "Tomato crop", "tomato crop", "common"),
+            (TOMATO, "Solanum fakeii", "solanum fakeii", "scientific"),
+            (BARE, "Nodata fakeii", "nodata fakeii", "scientific"),
+        ],
+    )
     conn.executemany(
         "INSERT INTO plant_regions VALUES (?, 'US-MD', ?)",
         [(SUNNY, "native"), (SHADY, "unknown"), (TOMATO, "cultivated")],
@@ -158,6 +174,58 @@ def test_zone_is_ignored_because_the_data_has_no_zones(cleared_client_ctx):
     assert len(cleared_client.search_plants(zone="7")) == 4
 
 
+# --- name search ------------------------------------------------------------
+
+
+def test_name_search_finds_a_common_name(cleared_client_ctx):
+    assert names(cleared_client.search_plants(query="sunny")) == ["Sunny coneflower"]
+
+
+def test_name_search_ignores_case_and_extra_spaces(cleared_client_ctx):
+    assert names(cleared_client.search_plants(query="  SUNNY   Coneflower ")) == ["Sunny coneflower"]
+
+
+def test_name_search_treats_hyphens_and_apostrophes_like_the_data_does(cleared_client_ctx):
+    # The data stores "Sun-lover's daisy" as "sun lovers daisy".
+    assert names(cleared_client.search_plants(query="sun-lover's daisy")) == ["Sunny coneflower"]
+    assert names(cleared_client.search_plants(query="sun lovers")) == ["Sunny coneflower"]
+
+
+def test_name_search_finds_latin_names_and_old_names(cleared_client_ctx):
+    assert names(cleared_client.search_plants(query="Polystichum fakeii")) == ["Shady fern"]
+    assert names(cleared_client.search_plants(query="rudbeckia oldname")) == ["Sunny coneflower"]
+
+
+def test_name_search_matches_the_middle_of_a_name(cleared_client_ctx):
+    assert names(cleared_client.search_plants(query="coneflow")) == ["Sunny coneflower"]
+
+
+def test_name_search_with_no_match_is_empty(cleared_client_ctx):
+    assert cleared_client.search_plants(query="zzzz") == []
+
+
+def test_blank_name_search_returns_everything(cleared_client_ctx):
+    assert len(cleared_client.search_plants(query="   ")) == 4
+
+
+def test_name_search_wildcards_are_taken_literally(cleared_client_ctx):
+    assert cleared_client.search_plants(query="%") == []
+    assert cleared_client.search_plants(query="s_nny") == []
+
+
+def test_name_search_combines_with_filters(cleared_client_ctx):
+    assert len(cleared_client.search_plants(query="fakeii")) == 4
+    assert names(cleared_client.search_plants(query="fakeii", sunlight=["Shade"])) == ["Shady fern"]
+    assert cleared_client.search_plants(query="sunny", sunlight=["Shade"]) == []
+
+
+def test_normalize_query():
+    assert cleared_client.normalize_query("Black-eyed  Susan") == "black eyed susan"
+    assert cleared_client.normalize_query("Aaron\u2019s rod") == "aarons rod"
+    assert cleared_client.normalize_query("Mentha \u00d7 piperita") == "mentha piperita"
+    assert cleared_client.normalize_query(None) == ""
+
+
 # --- what a plant looks like ------------------------------------------------
 
 
@@ -178,6 +246,7 @@ def test_normalized_plant_with_data(cleared_client_ctx):
     assert plant["imageUrl"] == f"https://img.example/{SUNNY}/medium.jpg"
     assert plant["imageCredit"] == "(c) Someone, some rights reserved (CC BY)"
     assert plant["imageLicense"] == "CC BY"
+    assert plant["imagePageUrl"] == "https://example.org/obs"
 
 
 def test_height_falls_back_to_the_usda_mature_height(cleared_client_ctx):
@@ -204,6 +273,7 @@ def test_missing_values_stay_empty_and_are_never_invented(cleared_client_ctx):
     assert plant["tags"] == []
     assert plant["imageUrl"] == ""
     assert plant["imageCredit"] == ""
+    assert plant["imagePageUrl"] == ""
     # "no data" must not turn into "no": these are None, never False.
     assert plant["flowering"] is None
     assert plant["edible"] is None
@@ -279,6 +349,15 @@ def test_route_source_cleared(client, cleared_app):
     response = client.get("/api/plants?source=cleared&sunlight=Shade")
     assert response.status_code == 200
     assert names(response.get_json()) == ["Shady fern"]
+
+
+def test_route_name_search(client, cleared_app):
+    response = client.get("/api/plants?source=cleared&q=Sun-Lover%27s")
+    assert names(response.get_json()) == ["Sunny coneflower"]
+
+
+def test_route_name_search_is_ignored_by_the_other_sources(client):
+    assert len(client.get("/api/plants?source=mock&q=zzzz").get_json()) == 15
 
 
 def test_route_detail_and_unknown_id(client, cleared_app):

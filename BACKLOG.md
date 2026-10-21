@@ -49,7 +49,7 @@ Steps run in this order; each is usable on its own. **Branch:** one branch for a
 If time runs short: **POC-1, 2, 3, 5, 6, 7** is the shortest path to the three goals. **POC-4** follows straight after, before anything is merged.
 
 Notes for these steps:
-- Name search and the flowering filter already run in the browser on the returned list, so they work for the cleared data as they are. With no filters the cleared source returns all 563 plants (fine for now; server-side search is PF-003).
+- The flowering filter runs in the browser on the returned list. Name search for the cleared source runs on the server (added after the first POC walkthrough). With no filters the cleared source returns all 563 plants (fine for now; server-side search is PF-003).
 - Photo URLs from the cleared data are full web addresses, so `imageUrl` works without changes.
 - Lists are tested on the live Render site (old data). Whether lists work with **cleared** plants is not tested by the POC; see PF-007.
 
@@ -60,16 +60,16 @@ What was built: `backend/app/cleared_client.py` (read-only, refuses unknown majo
 Walked through in the browser on `localhost:5173` with the cleared data: 563 plants load with photos; Shade = 150; Shade + Edible = 12; Flowering = 399 (matches the data); name search by "black" and "purple coneflower" work; the detail page shows photo, type, sunlight and flowering and leaves out the rows that have no data; the fixture source still looks as before, and the zone dropdown returns for it. Lists and sign-in were not tested (out of the POC).
 
 **Findings from POC-7 (to decide on):**
-1. **Name search misses spelling variants.** "black eyed susan" finds nothing because the data's name is "Blackeyed Susan" and the box only matches the names shown on the tiles. The data has a normalized name index (`names.name_normalized`, with synonyms and aliases) built for this. This is PF-003; it is the first thing to pull forward after the POC.
+1. **Name search missed spelling variants. Fixed the same day** (PF-003, name search part): "black eyed susan" found nothing because the box only matched the names shown on tiles. The cleared source now searches the data's normalized name index on the server (common names, Latin names, old Latin names, aliases); every one of the 563 plants is found by its own displayed name and Latin name.
 2. **Clicking Search after changing filters needs a clear idea of state.** The existing "Clear" button resets the page to the empty "Set your filters" state, and switching the source does the same (on purpose). Not a bug in the new code, but worth knowing when testing.
 3. **Data quality (the data repo's to fix):** Eastern purple coneflower shows "Height: 1.2 feet" (USDA's mature height; real plants are 2–4 feet). Some names look off ("Blackeyed Susan", "Eastern purple coneflower"). 163 plants have no size at all, so the Mature Size card is left out for them.
 4. **A plant with almost no data** (for example Aaron's rod) shows only its photo, names and type. That is correct per the data rules, but the tile looks sparse. A "no further data yet" hint is a design question.
 5. **`localhost` setup notes:** the preview launcher cannot read the Python venv under `~/Documents`, so the backend was started from the shell (`cd backend && .venv/bin/flask --app run.py run --port 5000`). Node 20 was installed under `~/.local/node` (add `~/.local/node/bin` to your PATH to use `npm` yourself). `.claude/launch.json` is local only (excluded from git).
-6. **Photo credits are returned by the API** (`imageCredit`, `imageLicense`, `imageLicenseUrl`) but not shown yet: PF-001, required before this goes public.
+6. **Photo credits** are now shown on tiles and the detail page (PF-001, first part). See PF-001 for what is still open.
 
 ### Gate: before anything public
 
-**Do not make `cleared` the default on the live Render site, and do not push the work to `main`, until PF-001 and PF-006 are done.** The photos are CC BY or CC0, and CC BY requires the credit to be visible; the deployed backend also cannot see the local data-repo folder. The POC runs only on your computer, so this does not block tonight.
+**Do not make `cleared` the default on the live Render site, and do not push the work to `main`, until the rest of PF-001 (the "About this data" screen and the photo hosting check) and PF-006 are done.** The photo credit itself now shows on tiles and the detail page. The photos are CC BY or CC0, and CC BY requires the credit to be visible; the deployed backend also cannot see the local data-repo folder. The POC runs only on your computer, so this does not block tonight.
 
 If you want to show it to someone online tonight, the smallest safe version is a one-line credit under the photo on the tile and the detail page (the cleared data gives `attribution`, `license_name` and `license_url`), plus PF-006. That is a slice of those two items; ask for it separately.
 
@@ -84,10 +84,19 @@ If you want to show it to someone online tonight, the smallest safe version is a
 - Render builds only this repo, so without this the cleared source cannot run there. See `docs/DATA_INTEGRATION.md`.
 
 ### PF-001: Photo credits, "About this data" screen, and photo hosting
-**Parked 2026-10-20** by the owner for the first pass. **Must be done before the cleared source is public.**
-- Show the photo credit (`attribution`, `license_name`, `license_url`) wherever a cleared-data photo appears: Discover tiles and the detail page.
-- Add an "About this data" screen built from the data's `sources` table (each source's attribution text; the data repo's generated `DATA_LICENSE.md` lists them too).
+**Must be finished before the cleared source is public.**
+
+Done 2026-10-20 (the photo credit):
+- One `PhotoCredit` component in `App.tsx`. Wording everywhere: "Photo: " plus the credit text exactly as the source supplies it, for example "Photo: (c) Alison Northup, some rights reserved (CC BY)". Photos whose credit has no author read "Photo: no rights reserved".
+- **Tile:** the credit sits over the bottom of the photo (two lines at most; the full text is in the hover tooltip). It also shows on the related-plants tiles.
+- **Detail page:** under the photo, followed by links to the **License** and to the photo's own page (**Source**).
+- Plants without a credit (the fixtures and Perenual) show nothing.
+- The API returns `imageCredit`, `imageLicense`, `imageLicenseUrl` and `imagePageUrl`.
+
+Still open:
+- An "About this data" screen built from the data's `sources` table (each source's attribution text; the data repo's generated `DATA_LICENSE.md` lists them too). The data repo's rule is to show the credit "wherever the data is used", so this screen is where the USDA, GRIN, USFWS and Census credits belong.
 - Check that the photo hosts allow hotlinking (iNaturalist's open-data bucket and Wikimedia), and decide whether a cache or CDN is needed later.
+- Decide whether the tile credit needs to be more visible (it is small, white on a dark fade over the photo).
 
 ### PF-007: Lists with the cleared data, and saving lists to the backend
 **First:** test saving cleared plants to lists locally (needs Google sign-in set up on `localhost`: a Google Client ID in both `.env` files and `http://localhost:5173` as an authorized origin) and make the **list cards on My Lists** tolerate empty values, the same way POC-5 does for the tile and detail page. Not done in the POC, so a plant with missing data may render badly in a list until then.
@@ -98,8 +107,13 @@ Lists and saved plants are in browser memory today and disappear on refresh. The
 ### PF-008: Fix sign-in on the live Render site
 Needed if you want to test lists on Render. The frontend and backend are on different `onrender.com` subdomains, which browsers treat as different sites, and the Flask session cookie has no `SameSite` setting, so the browser will likely not send it back: you land signed-out right after signing in. Fix in `backend/app/config.py`: `SESSION_COOKIE_SAMESITE = "None"` and `SESSION_COOKIE_SECURE = True` (local `localhost` is unaffected). Also check on Render that `FRONTEND_ORIGIN` is exactly `https://plantfolio-frontend.onrender.com` (no trailing slash) and that this URL is an Authorized JavaScript origin in Google Cloud Console. Not tested yet.
 
-### PF-003: Server-side name search and flowering filter
-The browser does these today. Move them to the server (`names.name_normalized`, or the `names_fts` table), so the app does not load every plant to search. Normalize the user's text the way the data repo does (lower case, no author, no hybrid sign, hyphens and apostrophes removed). Add a `flowering` filter. Needed once the plant set grows past a few hundred.
+### PF-003: Server-side flowering filter, and name search for the other sources
+**Name search for the cleared source is done (2026-10-20).** `/api/plants?source=cleared&q=...` matches the normalized text (lower case, hyphens turned into spaces, apostrophes and the hybrid sign removed) anywhere in any of a plant's names. The page re-runs the search about 0.3 seconds after you stop typing, and the old in-browser name filter is skipped for this source. Matching is a phrase match, so the words must appear in order ("coneflower purple" finds nothing); ranking is alphabetical.
+
+Still open:
+- A server-side `flowering` filter (today it still runs in the browser on the returned list; fine for 563 plants).
+- Ranking and word-order-free matching if the plant set grows (the data has an FTS5 `names_fts` table for this).
+- The fixture and Perenual sources still filter by name in the browser.
 
 ### PF-004: Sources report what they support
 A small endpoint (or a field on the plants response) says what each source supports: zone, ZIP, sunlight tags, nativity. The filter panel reads it instead of hardcoding source names, so a new source does not need frontend edits.

@@ -854,6 +854,72 @@ function SaveModal({ plantId, onClose }: { plantId: string; onClose: () => void 
 
 // ─── Plant Card (grid card) ───────────────────────────────────────────────────
 
+// Photo credit for plants whose photos carry one (the cleared data's CC BY / CC0
+// photos). One wording everywhere: "Photo: " + the credit text exactly as the
+// source supplies it. On the detail page it is followed by links to the license
+// and to the photo's own page. Nothing is shown for plants without a credit.
+function PhotoCredit({ plant, variant }: { plant: Plant; variant: "tile" | "detail" }) {
+  if (!plant.imageCredit) return null;
+
+  if (variant === "tile") {
+    return (
+      <div
+        title={`Photo: ${plant.imageCredit}`}
+        style={{
+          position: "absolute",
+          left: 0,
+          right: 0,
+          bottom: 0,
+          padding: "18px 10px 5px",
+          background: "linear-gradient(to top, rgba(20,30,24,0.68), rgba(20,30,24,0))",
+          color: "rgba(255,255,255,0.92)",
+          fontFamily: "'Public Sans', sans-serif",
+          fontSize: 10,
+          lineHeight: 1.3,
+          display: "-webkit-box",
+          WebkitLineClamp: 2,
+          WebkitBoxOrient: "vertical",
+          overflow: "hidden",
+          pointerEvents: "none",
+        }}
+      >
+        Photo: {plant.imageCredit}
+      </div>
+    );
+  }
+
+  const linkStyle = { color: "#7A776F", textDecoration: "underline" } as const;
+  return (
+    <p
+      style={{
+        fontFamily: "'Public Sans', sans-serif",
+        fontSize: 12,
+        color: "#7A776F",
+        lineHeight: 1.5,
+        marginTop: 8,
+      }}
+    >
+      Photo: {plant.imageCredit}
+      {plant.imageLicenseUrl && (
+        <>
+          {" · "}
+          <a href={plant.imageLicenseUrl} target="_blank" rel="noopener noreferrer" style={linkStyle}>
+            License
+          </a>
+        </>
+      )}
+      {plant.imagePageUrl && (
+        <>
+          {" · "}
+          <a href={plant.imagePageUrl} target="_blank" rel="noopener noreferrer" style={linkStyle}>
+            Source
+          </a>
+        </>
+      )}
+    </p>
+  );
+}
+
 const SUNLIGHT_ICONS: Record<Sunlight, typeof Sun> = {
   "Full Sun": Sun,
   Partial: CloudSun,
@@ -909,6 +975,7 @@ function PlantCard({ plant }: { plant: Plant }) {
               transform: hovered ? "scale(1.06)" : "scale(1)",
             }}
           />
+          <PhotoCredit plant={plant} variant="tile" />
           <button
             onClick={(e) => {
               e.stopPropagation();
@@ -1341,6 +1408,7 @@ function DiscoverPage() {
         sunlight: [...filters.sunlight],
         edible: filters.edibleOnly,
         zone: filters.zone || undefined,
+        query: filters.query,
       },
       source
     )
@@ -1361,9 +1429,25 @@ function DiscoverPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [searchTrigger]);
 
+  // The cleared source searches names on the server (it also knows spelling
+  // variants, old Latin names and aliases), so typing re-runs the search after a
+  // short pause. The other sources keep filtering by name in the browser below.
+  const firstRender = useRef(true);
+  useEffect(() => {
+    if (firstRender.current) {
+      firstRender.current = false;
+      return;
+    }
+    if (source !== "cleared" || (!filters.query && searchTrigger === 0)) return;
+    const timer = setTimeout(bumpSearchTrigger, 300);
+    return () => clearTimeout(timer);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [filters.query]);
+
   const filtered = useMemo(() => {
     return plants.filter((p) => {
       if (
+        source !== "cleared" &&
         filters.query &&
         !p.commonName.toLowerCase().includes(filters.query.toLowerCase()) &&
         !p.latinName.toLowerCase().includes(filters.query.toLowerCase())
@@ -1372,7 +1456,7 @@ function DiscoverPage() {
       if (filters.floweringOnly && !p.flowering) return false;
       return true;
     });
-  }, [plants, filters]);
+  }, [plants, filters, source]);
 
   const activeCount =
     filters.sunlight.size +
@@ -1830,6 +1914,7 @@ function PlantDetailPage({ plantId }: { plantId: string }) {
                 style={{ width: "100%", height: "100%", objectFit: "cover" }}
               />
             </div>
+            <PhotoCredit plant={plant} variant="detail" />
           </div>
 
           {/* Right: info */}
