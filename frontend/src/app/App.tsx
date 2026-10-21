@@ -4,7 +4,7 @@ import {
   X, Plus, Search, Check, Camera, Settings, HelpCircle, LogOut, Pencil,
   Trash2, User, SendHorizonal,
 } from "lucide-react";
-import { Plant, PlantList } from "./data";
+import { Plant, PlantList, PlantSource, Sunlight, sunlightOf } from "./data";
 import { fetchPlants, fetchPlantById, googleSignIn, getCurrentUser, signOutRequest, type AuthUser } from "./api";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
@@ -62,10 +62,11 @@ interface AppCtx {
   // first mount) — sidebar edits alone never bump it.
   searchTrigger: number;
   bumpSearchTrigger: () => void;
-  // Drives local fixture data (zero Perenual API calls) vs. the real API.
-  // Defaults on so casual use/testing never burns quota by accident.
-  testMode: boolean;
-  toggleTestMode: () => void;
+  // Which plant data the app shows: the cleared-plant-data database, the local
+  // Perenual-shaped fixtures (zero API calls), or the live Perenual API.
+  // Defaults to the fixtures so casual use never burns quota by accident.
+  source: PlantSource;
+  cycleSource: () => void;
   cachePlants: (plants: Plant[]) => void;
   getPlantsForList: (list: PlantList) => Plant[];
   getCachedPlants: () => Plant[];
@@ -102,9 +103,11 @@ function AppProvider({ children }: { children: ReactNode }) {
   const [filters, setFiltersState] = useState<FilterState>(FILTER_DEFAULTS);
   const [draftFilters, setDraftFiltersState] = useState<SidebarFilters>(SIDEBAR_FILTER_DEFAULTS);
   const [searchTrigger, setSearchTrigger] = useState(0);
-  const [testMode, setTestMode] = useState(() => {
-    const stored = localStorage.getItem("plantfolio_test_mode");
-    return stored === null ? true : stored === "true";
+  const [source, setSource] = useState<PlantSource>(() => {
+    const stored = localStorage.getItem("plantfolio_data_source");
+    if (stored === "cleared" || stored === "mock" || stored === "perenual") return stored;
+    // Older versions stored a test-mode flag instead.
+    return localStorage.getItem("plantfolio_test_mode") === "false" ? "perenual" : "mock";
   });
   const [plantsCache, setPlantsCache] = useState<Map<string, Plant>>(new Map());
 
@@ -186,13 +189,21 @@ function AppProvider({ children }: { children: ReactNode }) {
     },
     searchTrigger,
     bumpSearchTrigger: () => setSearchTrigger((n) => n + 1),
-    testMode,
-    toggleTestMode: () =>
-      setTestMode((prev) => {
-        const next = !prev;
-        localStorage.setItem("plantfolio_test_mode", String(next));
-        return next;
-      }),
+    source,
+    cycleSource: () => {
+      // The live API is last, so a click from the default never lands on it by accident.
+      const order: PlantSource[] = ["mock", "cleared", "perenual"];
+      const next = order[(order.indexOf(source) + 1) % order.length];
+      localStorage.setItem("plantfolio_data_source", next);
+      setSource(next);
+      // Results, cached plants and a zone choice belong to the old source; start over.
+      setSearchTrigger(0);
+      setPlantsCache(new Map());
+      if (next === "cleared") {
+        setFiltersState((prev) => ({ ...prev, zone: "" }));
+        setDraftFiltersState((prev) => ({ ...prev, zone: "" }));
+      }
+    },
     cachePlants,
     getPlantsForList,
     getCachedPlants,
@@ -221,7 +232,7 @@ function PlantfolioLogo({ size = 28 }: { size?: number }) {
 // ─── Header ───────────────────────────────────────────────────────────────────
 
 function Header() {
-  const { page, setPage, isSignedIn, currentUser, testMode, toggleTestMode } = useApp();
+  const { page, setPage, isSignedIn, currentUser, source, cycleSource } = useApp();
   const active = page.name;
   const initials = (currentUser?.name ?? currentUser?.email ?? "?")
     .split(" ")
@@ -314,10 +325,12 @@ function Header() {
       {/* Secondary nav */}
       <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
         <button
-          onClick={toggleTestMode}
+          onClick={cycleSource}
           title={
-            testMode
-              ? "Test mode: using local sample data. Click to switch to the live Perenual API."
+            source === "mock"
+              ? "Test mode: using local sample data. Click to switch to the cleared plant data."
+              : source === "cleared"
+              ? "Cleared plant data (Maryland). Click to switch to the live Perenual API."
               : "Live mode: using the real Perenual API. Click to switch to local sample data."
           }
           style={{
@@ -336,7 +349,7 @@ function Header() {
               width: 6,
               height: 6,
               borderRadius: "50%",
-              backgroundColor: testMode ? "#9CAF88" : "#C77B4D",
+              backgroundColor: source === "perenual" ? "#C77B4D" : "#9CAF88",
               flexShrink: 0,
             }}
           />
@@ -347,7 +360,7 @@ function Header() {
               color: "rgba(246,241,231,0.7)",
             }}
           >
-            {testMode ? "Test data" : "Live API"}
+            {source === "cleared" ? "Cleared data" : source === "mock" ? "Test data" : "Live API"}
           </span>
         </button>
         <NavLink target="support" label="Support" />
@@ -841,7 +854,7 @@ function SaveModal({ plantId, onClose }: { plantId: string; onClose: () => void 
 
 // ─── Plant Card (grid card) ───────────────────────────────────────────────────
 
-const SUNLIGHT_ICONS: Record<Plant["sunlight"], typeof Sun> = {
+const SUNLIGHT_ICONS: Record<Sunlight, typeof Sun> = {
   "Full Sun": Sun,
   Partial: CloudSun,
   Shade: Cloud,
@@ -853,7 +866,10 @@ function PlantCard({ plant }: { plant: Plant }) {
   const [saveOpen, setSaveOpen] = useState(false);
   const [hovered, setHovered] = useState(false);
   const saved = isSaved(plant.id);
-  const SunlightIcon = SUNLIGHT_ICONS[plant.sunlight];
+  const sunlight = sunlightOf(plant);
+  const SunlightIcon = sunlight.length > 0 ? SUNLIGHT_ICONS[sunlight[0]] : null;
+  // A fact with no data is left out, not shown as "Unknown".
+  const showFacts = sunlight.length > 0 || Boolean(plant.zones) || Boolean(plant.edible);
 
   return (
     <>
@@ -979,9 +995,11 @@ function PlantCard({ plant }: { plant: Plant }) {
               </span>
             ))}
           </div>
+          {showFacts && (
           <div
             style={{
               display: "flex",
+              flexWrap: "wrap",
               alignItems: "center",
               gap: 12,
               paddingTop: 8,
@@ -989,32 +1007,36 @@ function PlantCard({ plant }: { plant: Plant }) {
               marginTop: "auto",
             }}
           >
-            <span
-              style={{
-                display: "flex",
-                alignItems: "center",
-                gap: 4,
-                fontFamily: "'Public Sans', sans-serif",
-                fontSize: 12,
-                color: "#7A776F",
-              }}
-            >
-              <SunlightIcon size={12} strokeWidth={1.5} color="#C77B4D" />
-              {plant.sunlight}
-            </span>
-            <span
-              style={{
-                display: "flex",
-                alignItems: "center",
-                gap: 4,
-                fontFamily: "'Public Sans', sans-serif",
-                fontSize: 12,
-                color: "#7A776F",
-              }}
-            >
-              <Leaf size={12} strokeWidth={1.5} color="#9CAF88" />
-              Zone {plant.zones}
-            </span>
+            {SunlightIcon && (
+              <span
+                style={{
+                  display: "flex",
+                  alignItems: "center",
+                  gap: 4,
+                  fontFamily: "'Public Sans', sans-serif",
+                  fontSize: 12,
+                  color: "#7A776F",
+                }}
+              >
+                <SunlightIcon size={12} strokeWidth={1.5} color="#C77B4D" />
+                {sunlight.join(", ")}
+              </span>
+            )}
+            {plant.zones && (
+              <span
+                style={{
+                  display: "flex",
+                  alignItems: "center",
+                  gap: 4,
+                  fontFamily: "'Public Sans', sans-serif",
+                  fontSize: 12,
+                  color: "#7A776F",
+                }}
+              >
+                <Leaf size={12} strokeWidth={1.5} color="#9CAF88" />
+                Zone {plant.zones}
+              </span>
+            )}
             {plant.edible && (
               <span
                 style={{
@@ -1029,6 +1051,7 @@ function PlantCard({ plant }: { plant: Plant }) {
               </span>
             )}
           </div>
+          )}
         </div>
       </div>
 
@@ -1041,7 +1064,7 @@ function PlantCard({ plant }: { plant: Plant }) {
 // ─── Filter Sidebar ───────────────────────────────────────────────────────────
 
 function FilterSidebar() {
-  const { draftFilters, setDraftFilters, applyDraftFilters, clearFilters } = useApp();
+  const { draftFilters, setDraftFilters, applyDraftFilters, clearFilters, source } = useApp();
 
   const toggleSun = (v: string) => {
     const n = new Set(draftFilters.sunlight);
@@ -1143,7 +1166,8 @@ function FilterSidebar() {
         </div>
       </div>
 
-      {/* USDA Zone */}
+      {/* USDA Zone (the cleared data has no zones, so there is nothing to filter) */}
+      {source !== "cleared" && (
       <div style={{ marginBottom: 20 }}>
         <p
           style={{
@@ -1182,6 +1206,7 @@ function FilterSidebar() {
           ))}
         </select>
       </div>
+      )}
 
       {/* Plant Traits */}
       <div>
@@ -1288,7 +1313,7 @@ function DiscoverPage() {
     cachePlants,
     searchTrigger,
     bumpSearchTrigger,
-    testMode,
+    source,
   } = useApp();
   const [plants, setPlants] = useState<Plant[]>([]);
   const [loading, setLoading] = useState(false);
@@ -1299,7 +1324,7 @@ function DiscoverPage() {
   // nothing calls the API — not even on first mount — until the user
   // explicitly asks for it. Sunlight/edible/zone are filtered server-side
   // (zone via an inclusive range match — see backend/app/perenual_client.py).
-  // Query/flowering stay client-side since Perenual doesn't support them.
+  // Query/flowering stay client-side (the cleared source could do them too; BACKLOG PF-003).
   useEffect(() => {
     if (searchTrigger === 0) {
       setPlants([]);
@@ -1317,7 +1342,7 @@ function DiscoverPage() {
         edible: filters.edibleOnly,
         zone: filters.zone || undefined,
       },
-      testMode
+      source
     )
       .then((results) => {
         if (cancelled) return;
@@ -1690,7 +1715,7 @@ function DiscoverPage() {
 // ─── Plant Detail Page ────────────────────────────────────────────────────────
 
 function PlantDetailPage({ plantId }: { plantId: string }) {
-  const { isSaved, toggleSave, isSignedIn, setPage, cachePlants, getCachedPlants, testMode } = useApp();
+  const { isSaved, toggleSave, isSignedIn, setPage, cachePlants, getCachedPlants, source } = useApp();
   const [plant, setPlant] = useState<Plant | null>(null);
   const [notFound, setNotFound] = useState(false);
   const [saveOpen, setSaveOpen] = useState(false);
@@ -1700,7 +1725,7 @@ function PlantDetailPage({ plantId }: { plantId: string }) {
     let cancelled = false;
     setPlant(null);
     setNotFound(false);
-    fetchPlantById(plantId, testMode)
+    fetchPlantById(plantId, source)
       .then((result) => {
         if (cancelled) return;
         setPlant(result);
@@ -1715,6 +1740,18 @@ function PlantDetailPage({ plantId }: { plantId: string }) {
   }, [plantId]);
 
   const saved = plant ? isSaved(plant.id) : false;
+  // Rows for the plant data grid. A value the source does not have is "" and the
+  // row is left out. Perenual's own "Unknown" text still shows, as before. Bloom
+  // season is often missing even in Perenual, so "Unknown" is dropped there too.
+  const detailRows: [string, string][] = plant
+    ? ([
+        ["Sunlight", sunlightOf(plant).join(", ")],
+        ["USDA Zones", plant.zones],
+        ["Type", plant.tags.join(", ")],
+        ["Flowering", plant.flowering == null ? "" : plant.flowering ? "Yes" : "No"],
+        ["Bloom Season", plant.bloomSeason === "Unknown" ? "" : plant.bloomSeason],
+      ] as [string, string][]).filter(([, value]) => value)
+    : [];
   // "Related" plants come from whatever's already been fetched into the
   // shared cache (e.g. from Discover), rather than a separate API call.
   const related = getCachedPlants()
@@ -1831,19 +1868,21 @@ function PlantDetailPage({ plantId }: { plantId: string }) {
               >
                 {plant.latinName}
               </p>
-              <p
-                style={{
-                  fontFamily: "'Public Sans', sans-serif",
-                  fontSize: 15,
-                  color: "#555250",
-                  lineHeight: 1.75,
-                }}
-              >
-                {plant.description}
-              </p>
+              {plant.description && (
+                <p
+                  style={{
+                    fontFamily: "'Public Sans', sans-serif",
+                    fontSize: 15,
+                    color: "#555250",
+                    lineHeight: 1.75,
+                  }}
+                >
+                  {plant.description}
+                </p>
+              )}
             </div>
 
-            {/* Care cards */}
+            {/* Care cards (a card with no data is left out) */}
             <div
               style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}
             >
@@ -1858,7 +1897,9 @@ function PlantDetailPage({ plantId }: { plantId: string }) {
                   label: "Mature Size",
                   value: plant.matureSize,
                 },
-              ].map((c) => (
+              ]
+                .filter((c) => c.value)
+                .map((c) => (
                 <div
                   key={c.label}
                   style={{
@@ -1904,7 +1945,8 @@ function PlantDetailPage({ plantId }: { plantId: string }) {
               ))}
             </div>
 
-            {/* Plant data grid */}
+            {/* Plant data grid (a row with no data is left out) */}
+            {detailRows.length > 0 && (
             <div
               style={{
                 backgroundColor: "#EDE8DC",
@@ -1919,18 +1961,7 @@ function PlantDetailPage({ plantId }: { plantId: string }) {
                   gap: "14px 24px",
                 }}
               >
-                {[
-                  ["Sunlight", plant.sunlight],
-                  ["USDA Zones", plant.zones],
-                  ["Type", plant.tags.join(", ") || "Unknown"],
-                  ["Flowering", plant.flowering ? "Yes" : "No"],
-                  // Perenual only has bloom-season data for some species
-                  // (mostly true flowering plants, not trees/conifers) —
-                  // show the row only when there's something to say.
-                  ...(plant.bloomSeason !== "Unknown"
-                    ? [["Bloom Season", plant.bloomSeason]]
-                    : []),
-                ].map(([k, v]) => (
+                {detailRows.map(([k, v]) => (
                   <div key={k}>
                     <p
                       style={{
@@ -1959,6 +1990,7 @@ function PlantDetailPage({ plantId }: { plantId: string }) {
                 ))}
               </div>
             </div>
+            )}
 
             {/* Save button */}
             <button

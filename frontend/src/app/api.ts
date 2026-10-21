@@ -1,4 +1,4 @@
-import type { Plant } from "./data";
+import type { Plant, PlantSource } from "./data";
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? "http://localhost:5000";
 
@@ -25,20 +25,29 @@ async function errorMessage(response: Response, fallback: string): Promise<strin
   return fallback;
 }
 
-export async function fetchPlants(filters: PlantFilters = {}, testMode = true): Promise<Plant[]> {
+// `source` picks the backend's plant data. The older `mock` parameter is sent
+// too (for the two sources an older backend knows), so a deployed backend that
+// predates `source` keeps answering as before.
+function sourceParams(params: URLSearchParams, source: PlantSource): void {
+  params.set("source", source);
+  if (source !== "cleared") params.set("mock", source === "mock" ? "true" : "false");
+}
+
+export async function fetchPlants(filters: PlantFilters = {}, source: PlantSource = "mock"): Promise<Plant[]> {
   const params = new URLSearchParams();
   filters.sunlight?.forEach((s) => params.append("sunlight", s));
   if (filters.edible) params.set("edible", "true");
   if (filters.zone) params.set("zone", filters.zone);
-  params.set("mock", testMode ? "true" : "false");
+  sourceParams(params, source);
 
   const response = await fetch(`${API_BASE_URL}/api/plants?${params.toString()}`);
   if (!response.ok) throw new Error(await errorMessage(response, `Failed to load plants (${response.status})`));
   return response.json();
 }
 
-export async function fetchPlantById(id: string, testMode = true): Promise<Plant> {
-  const params = new URLSearchParams({ mock: testMode ? "true" : "false" });
+export async function fetchPlantById(id: string, source: PlantSource = "mock"): Promise<Plant> {
+  const params = new URLSearchParams();
+  sourceParams(params, source);
   const response = await fetch(`${API_BASE_URL}/api/plants/${encodeURIComponent(id)}?${params.toString()}`);
   if (!response.ok) throw new Error(await errorMessage(response, `Failed to load plant ${id} (${response.status})`));
   return response.json();

@@ -19,6 +19,12 @@ class Config:
     # instead of calling the real Perenual API — for developing/testing the
     # UI without spending the free tier's 100-requests/day quota.
     MOCK_PERENUAL = os.environ.get("MOCK_PERENUAL", "false").lower() == "true"
+    # Which plant data source answers /api/plants when a request does not name
+    # one: "cleared" (the cleared-plant-data SQLite file), "mock" or "perenual".
+    # Empty keeps the original behavior, where MOCK_PERENUAL decides.
+    PLANT_DATA_SOURCE = os.environ.get("PLANT_DATA_SOURCE", "").lower()
+    # Path to the cleared-plant-data database (build/poc/plants_poc.sqlite).
+    CLEARED_DB_PATH = os.environ.get("CLEARED_DB_PATH", "")
 
 
 class TestConfig(Config):
@@ -31,3 +37,5 @@ class TestConfig(Config):
     # regardless of the developer's local MOCK_PERENUAL setting. Tests that
     # want mock mode set app.config["MOCK_PERENUAL"] = True themselves.
     MOCK_PERENUAL = False
+    PLANT_DATA_SOURCE = ""
+    CLEARED_DB_PATH = ""
