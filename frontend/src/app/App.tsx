@@ -4,8 +4,10 @@ import {
   X, Plus, Search, Check, Camera, Settings, HelpCircle, LogOut, Pencil,
   Trash2, User, SendHorizonal,
 } from "lucide-react";
-import { Plant, PlantList, PlantSource, Sunlight, sunlightOf } from "./data";
-import { fetchPlants, fetchPlantById, googleSignIn, getCurrentUser, signOutRequest, type AuthUser } from "./api";
+import {
+  Plant, PlantList, PlantSource, Sunlight, ZipLocation, sunlightOf, nativityChipLabel, nativityDetailLabel,
+} from "./data";
+import { fetchPlants, fetchPlantById, lookupZip, googleSignIn, getCurrentUser, signOutRequest, type AuthUser } from "./api";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -24,6 +26,8 @@ interface FilterState {
   zone: string;
   floweringOnly: boolean;
   edibleOnly: boolean;
+  // Cleared source only: plants native in the user's region.
+  nativeOnly: boolean;
 }
 
 // Sidebar-editable subset of FilterState. Edits land here first and only
@@ -66,7 +70,11 @@ interface AppCtx {
   // Perenual-shaped fixtures (zero API calls), or the live Perenual API.
   // Defaults to the fixtures so casual use never burns quota by accident.
   source: PlantSource;
-  cycleSource: () => void;
+  setSource: (next: PlantSource) => void;
+  // The user's ZIP code, looked up in the cleared data (cleared source only). It sets
+  // which region nativity is shown for; it is a setting, not a filter, so Clear keeps it.
+  location: ZipLocation | null;
+  setLocation: (next: ZipLocation | null) => void;
   cachePlants: (plants: Plant[]) => void;
   getPlantsForList: (list: PlantList) => Plant[];
   getCachedPlants: () => Plant[];
@@ -80,6 +88,7 @@ const FILTER_DEFAULTS: FilterState = {
   zone: "",
   floweringOnly: false,
   edibleOnly: false,
+  nativeOnly: false,
 };
 
 const SIDEBAR_FILTER_DEFAULTS: SidebarFilters = {
@@ -87,6 +96,15 @@ const SIDEBAR_FILTER_DEFAULTS: SidebarFilters = {
   zone: "",
   floweringOnly: false,
   edibleOnly: false,
+  nativeOnly: false,
+};
+
+// Short on purpose: three of these sit in the header next to the nav. The hover
+// text on each button has the full name.
+const SOURCE_LABELS: Record<PlantSource, string> = {
+  cleared: "Cleared",
+  mock: "Test",
+  perenual: "Live API",
 };
 
 function useApp() {
@@ -103,11 +121,19 @@ function AppProvider({ children }: { children: ReactNode }) {
   const [filters, setFiltersState] = useState<FilterState>(FILTER_DEFAULTS);
   const [draftFilters, setDraftFiltersState] = useState<SidebarFilters>(SIDEBAR_FILTER_DEFAULTS);
   const [searchTrigger, setSearchTrigger] = useState(0);
-  const [source, setSource] = useState<PlantSource>(() => {
+  const [source, setSourceState] = useState<PlantSource>(() => {
     const stored = localStorage.getItem("plantfolio_data_source");
     if (stored === "cleared" || stored === "mock" || stored === "perenual") return stored;
     // Older versions stored a test-mode flag instead.
     return localStorage.getItem("plantfolio_test_mode") === "false" ? "perenual" : "mock";
+  });
+  const [location, setLocationState] = useState<ZipLocation | null>(() => {
+    try {
+      const stored = localStorage.getItem("plantfolio_location");
+      return stored ? (JSON.parse(stored) as ZipLocation) : null;
+    } catch {
+      return null;
+    }
   });
   const [plantsCache, setPlantsCache] = useState<Map<string, Plant>>(new Map());
 
@@ -190,19 +216,38 @@ function AppProvider({ children }: { children: ReactNode }) {
     searchTrigger,
     bumpSearchTrigger: () => setSearchTrigger((n) => n + 1),
     source,
-    cycleSource: () => {
-      // The live API is last, so a click from the default never lands on it by accident.
-      const order: PlantSource[] = ["mock", "cleared", "perenual"];
-      const next = order[(order.indexOf(source) + 1) % order.length];
-      localStorage.setItem("plantfolio_data_source", next);
-      setSource(next);
-      // Results, cached plants and a zone choice belong to the old source; start over.
+    setSource: (next) => {
+      if (next === source) return;
+      try {
+        localStorage.setItem("plantfolio_data_source", next);
+      } catch {
+        // storage unavailable: the choice just won't be remembered
+      }
+      setSourceState(next);
+      // Results, cached plants and an open plant belong to the old source; start over.
       setSearchTrigger(0);
       setPlantsCache(new Map());
+      if (page.name === "plant") setPage({ name: "discover" });
+      // Some controls exist for one source only: zone for the others, Native for cleared.
       if (next === "cleared") {
         setFiltersState((prev) => ({ ...prev, zone: "" }));
         setDraftFiltersState((prev) => ({ ...prev, zone: "" }));
+      } else {
+        setFiltersState((prev) => ({ ...prev, nativeOnly: false }));
+        setDraftFiltersState((prev) => ({ ...prev, nativeOnly: false }));
       }
+    },
+    location,
+    setLocation: (next) => {
+      setLocationState(next);
+      try {
+        if (next) localStorage.setItem("plantfolio_location", JSON.stringify(next));
+        else localStorage.removeItem("plantfolio_location");
+      } catch {
+        // storage unavailable: the ZIP just won't be remembered
+      }
+      // Nativity on the shown results was for the old region; run the search again.
+      setSearchTrigger((n) => (n > 0 ? n + 1 : n));
     },
     cachePlants,
     getPlantsForList,
@@ -232,7 +277,7 @@ function PlantfolioLogo({ size = 28 }: { size?: number }) {
 // ─── Header ───────────────────────────────────────────────────────────────────
 
 function Header() {
-  const { page, setPage, isSignedIn, currentUser, source, cycleSource } = useApp();
+  const { page, setPage, isSignedIn, currentUser, source, setSource } = useApp();
   const active = page.name;
   const initials = (currentUser?.name ?? currentUser?.email ?? "?")
     .split(" ")
@@ -324,45 +369,48 @@ function Header() {
 
       {/* Secondary nav */}
       <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-        <button
-          onClick={cycleSource}
-          title={
-            source === "mock"
-              ? "Test mode: using local sample data. Click to switch to the cleared plant data."
-              : source === "cleared"
-              ? "Cleared plant data (Maryland). Click to switch to the live Perenual API."
-              : "Live mode: using the real Perenual API. Click to switch to local sample data."
-          }
+        <div
+          role="group"
+          aria-label="Plant data source"
           style={{
             display: "flex",
-            alignItems: "center",
-            gap: 5,
-            background: "none",
-            border: "none",
-            cursor: "pointer",
-            padding: "4px 6px",
-            opacity: 0.5,
+            border: "1px solid rgba(246,241,231,0.3)",
+            borderRadius: 8,
+            overflow: "hidden",
           }}
         >
-          <span
-            style={{
-              width: 6,
-              height: 6,
-              borderRadius: "50%",
-              backgroundColor: source === "perenual" ? "#C77B4D" : "#9CAF88",
-              flexShrink: 0,
-            }}
-          />
-          <span
-            style={{
-              fontFamily: "'Public Sans', sans-serif",
-              fontSize: 10,
-              color: "rgba(246,241,231,0.7)",
-            }}
-          >
-            {source === "cleared" ? "Cleared data" : source === "mock" ? "Test data" : "Live API"}
-          </span>
-        </button>
+          {(["cleared", "mock", "perenual"] as PlantSource[]).map((option) => {
+            const active = source === option;
+            const live = option === "perenual";
+            return (
+              <button
+                key={option}
+                onClick={() => setSource(option)}
+                aria-pressed={active}
+                title={
+                  option === "cleared"
+                    ? "Cleared plant data (Maryland): real data from the cleared-plant-data database."
+                    : option === "mock"
+                    ? "Test data: 15 local sample plants. Uses no API calls."
+                    : "Live API: the real Perenual API. Uses your daily request quota."
+                }
+                style={{
+                  padding: "5px 8px",
+                  border: "none",
+                  cursor: "pointer",
+                  whiteSpace: "nowrap",
+                  fontFamily: "'Public Sans', sans-serif",
+                  fontSize: 12,
+                  fontWeight: active ? 600 : 400,
+                  backgroundColor: active ? (live ? "#C77B4D" : "#F6F1E7") : "transparent",
+                  color: active ? (live ? "#F6F1E7" : "#2F4A3D") : "rgba(246,241,231,0.65)",
+                }}
+              >
+                {SOURCE_LABELS[option]}
+              </button>
+            );
+          })}
+        </div>
         <NavLink target="support" label="Support" />
         <NavLink target="about" label="About" />
 
@@ -858,6 +906,33 @@ function SaveModal({ plantId, onClose }: { plantId: string; onClose: () => void 
 // photos). One wording everywhere: "Photo: " + the credit text exactly as the
 // source supplies it. On the detail page it is followed by links to the license
 // and to the photo's own page. Nothing is shown for plants without a credit.
+// Whether the plant is native, introduced or garden-grown only in the user's region.
+// Nothing is shown when the data has no row for the region (or the status is unclear).
+function NativityChip({ plant }: { plant: Plant }) {
+  const label = nativityChipLabel(plant);
+  if (!label) return null;
+  const style =
+    plant.nativity === "native"
+      ? { backgroundColor: "#DCE7D2", color: "#2F4A3D" }
+      : plant.nativity === "introduced"
+      ? { backgroundColor: "#F1DFC9", color: "#7A4A24" }
+      : { backgroundColor: "#EDE8DC", color: "#7A776F" };
+  return (
+    <span
+      title={nativityDetailLabel(plant)}
+      style={{
+        ...style,
+        fontFamily: "'Public Sans', sans-serif",
+        fontSize: 11,
+        borderRadius: 999,
+        padding: "3px 9px",
+      }}
+    >
+      {label}
+    </span>
+  );
+}
+
 function PhotoCredit({ plant, variant }: { plant: Plant; variant: "tile" | "detail" }) {
   if (!plant.imageCredit) return null;
 
@@ -1046,6 +1121,7 @@ function PlantCard({ plant }: { plant: Plant }) {
             </p>
           </div>
           <div style={{ display: "flex", flexWrap: "wrap", gap: 5 }}>
+            <NativityChip plant={plant} />
             {plant.tags.slice(0, 3).map((tag) => (
               <span
                 key={tag}
@@ -1131,7 +1207,33 @@ function PlantCard({ plant }: { plant: Plant }) {
 // ─── Filter Sidebar ───────────────────────────────────────────────────────────
 
 function FilterSidebar() {
-  const { draftFilters, setDraftFilters, applyDraftFilters, clearFilters, source } = useApp();
+  const { draftFilters, setDraftFilters, applyDraftFilters, clearFilters, source, location, setLocation } = useApp();
+  const [zipText, setZipText] = useState(location?.zip ?? "");
+  const [zipStatus, setZipStatus] = useState<"idle" | "loading" | "notfound" | "error">("idle");
+  const zipRequest = useRef(0);
+
+  const onZipChange = (raw: string) => {
+    const digits = raw.replace(/\D/g, "").slice(0, 5);
+    setZipText(digits);
+    setZipStatus("idle");
+    const mine = ++zipRequest.current;
+    if (digits.length < 5) {
+      if (location) setLocation(null);
+      return;
+    }
+    setZipStatus("loading");
+    lookupZip(digits)
+      .then((found) => {
+        if (mine !== zipRequest.current) return;
+        setLocation(found);
+        setZipStatus(found ? "idle" : "notfound");
+      })
+      .catch(() => {
+        if (mine !== zipRequest.current) return;
+        setLocation(null);
+        setZipStatus("error");
+      });
+  };
 
   const toggleSun = (v: string) => {
     const n = new Set(draftFilters.sunlight);
@@ -1143,7 +1245,8 @@ function FilterSidebar() {
     draftFilters.sunlight.size +
     (draftFilters.zone ? 1 : 0) +
     (draftFilters.floweringOnly ? 1 : 0) +
-    (draftFilters.edibleOnly ? 1 : 0);
+    (draftFilters.edibleOnly ? 1 : 0) +
+    (draftFilters.nativeOnly ? 1 : 0);
 
   return (
     <aside
@@ -1275,6 +1378,65 @@ function FilterSidebar() {
       </div>
       )}
 
+      {/* ZIP code (cleared data only: it sets the region nativity is shown for) */}
+      {source === "cleared" && (
+        <div style={{ marginBottom: 20 }}>
+          <p
+            style={{
+              fontFamily: "'Public Sans', sans-serif",
+              fontSize: 10,
+              fontWeight: 700,
+              color: "#9CAF88",
+              textTransform: "uppercase",
+              letterSpacing: "0.1em",
+              marginBottom: 9,
+            }}
+          >
+            ZIP code
+          </p>
+          <input
+            value={zipText}
+            onChange={(e) => onZipChange(e.target.value)}
+            inputMode="numeric"
+            placeholder="e.g. 20850"
+            aria-label="ZIP code"
+            style={{
+              width: "100%",
+              padding: "8px 12px",
+              borderRadius: 8,
+              border: "1px solid #D8C3A5",
+              backgroundColor: "#EDE8DC",
+              fontFamily: "'Public Sans', sans-serif",
+              fontSize: 13,
+              color: "#2F4A3D",
+              outline: "none",
+              boxSizing: "border-box",
+            }}
+          />
+          <p
+            style={{
+              fontFamily: "'Public Sans', sans-serif",
+              fontSize: 12,
+              lineHeight: 1.4,
+              color: "#7A776F",
+              marginTop: 6,
+            }}
+          >
+            {zipStatus === "loading"
+              ? "Looking up…"
+              : zipStatus === "notfound"
+              ? "That ZIP code was not found. Check it and try again."
+              : zipStatus === "error"
+              ? "Couldn't look up that ZIP code. Try again."
+              : location
+              ? location.hasPlantData
+                ? `${location.county}, ${location.state}${location.approximate ? " (approximate)" : ""}. Nativity is shown for ${location.regionName}.`
+                : `${location.county}, ${location.state}. No plant data for ${location.regionName} yet, so nativity isn't shown.`
+              : "Enter your ZIP code to see what's native near you."}
+          </p>
+        </div>
+      )}
+
       {/* Plant Traits */}
       <div>
         <p
@@ -1295,7 +1457,8 @@ function FilterSidebar() {
             [
               { label: "Flowering", key: "floweringOnly" },
               { label: "Edible", key: "edibleOnly" },
-            ] as Array<{ label: string; key: "floweringOnly" | "edibleOnly" }>
+              ...(source === "cleared" ? [{ label: "Native", key: "nativeOnly" }] : []),
+            ] as Array<{ label: string; key: "floweringOnly" | "edibleOnly" | "nativeOnly" }>
           ).map(({ label, key }) => {
             const on = draftFilters[key];
             return (
@@ -1381,6 +1544,7 @@ function DiscoverPage() {
     searchTrigger,
     bumpSearchTrigger,
     source,
+    location,
   } = useApp();
   const [plants, setPlants] = useState<Plant[]>([]);
   const [loading, setLoading] = useState(false);
@@ -1409,6 +1573,8 @@ function DiscoverPage() {
         edible: filters.edibleOnly,
         zone: filters.zone || undefined,
         query: filters.query,
+        native: filters.nativeOnly || undefined,
+        region: location?.region,
       },
       source
     )
@@ -1462,7 +1628,8 @@ function DiscoverPage() {
     filters.sunlight.size +
     (filters.zone ? 1 : 0) +
     (filters.floweringOnly ? 1 : 0) +
-    (filters.edibleOnly ? 1 : 0);
+    (filters.edibleOnly ? 1 : 0) +
+    (filters.nativeOnly ? 1 : 0);
 
   return (
     <div style={{ display: "flex", flex: 1, overflow: "hidden" }}>
@@ -1626,6 +1793,33 @@ function DiscoverPage() {
                   onClick={() => {
                     setFilters({ edibleOnly: false });
                     setDraftFilters({ edibleOnly: false });
+                    bumpSearchTrigger();
+                  }}
+                  style={{ background: "none", border: "none", cursor: "pointer", display: "flex" }}
+                >
+                  <X size={10} strokeWidth={2.2} color="#9CAF88" />
+                </button>
+              </span>
+            )}
+            {filters.nativeOnly && (
+              <span
+                style={{
+                  display: "flex",
+                  alignItems: "center",
+                  gap: 5,
+                  backgroundColor: "#2F4A3D",
+                  color: "#F6F1E7",
+                  fontFamily: "'Public Sans', sans-serif",
+                  fontSize: 12,
+                  borderRadius: 999,
+                  padding: "4px 10px",
+                }}
+              >
+                Native
+                <button
+                  onClick={() => {
+                    setFilters({ nativeOnly: false });
+                    setDraftFilters({ nativeOnly: false });
                     bumpSearchTrigger();
                   }}
                   style={{ background: "none", border: "none", cursor: "pointer", display: "flex" }}
@@ -1799,7 +1993,7 @@ function DiscoverPage() {
 // ─── Plant Detail Page ────────────────────────────────────────────────────────
 
 function PlantDetailPage({ plantId }: { plantId: string }) {
-  const { isSaved, toggleSave, isSignedIn, setPage, cachePlants, getCachedPlants, source } = useApp();
+  const { isSaved, toggleSave, isSignedIn, setPage, cachePlants, getCachedPlants, source, location } = useApp();
   const [plant, setPlant] = useState<Plant | null>(null);
   const [notFound, setNotFound] = useState(false);
   const [saveOpen, setSaveOpen] = useState(false);
@@ -1809,7 +2003,7 @@ function PlantDetailPage({ plantId }: { plantId: string }) {
     let cancelled = false;
     setPlant(null);
     setNotFound(false);
-    fetchPlantById(plantId, source)
+    fetchPlantById(plantId, source, location?.region)
       .then((result) => {
         if (cancelled) return;
         setPlant(result);
@@ -1832,6 +2026,7 @@ function PlantDetailPage({ plantId }: { plantId: string }) {
         ["Sunlight", sunlightOf(plant).join(", ")],
         ["USDA Zones", plant.zones],
         ["Type", plant.tags.join(", ")],
+        ["Nativity", nativityDetailLabel(plant)],
         ["Flowering", plant.flowering == null ? "" : plant.flowering ? "Yes" : "No"],
         ["Bloom Season", plant.bloomSeason === "Unknown" ? "" : plant.bloomSeason],
       ] as [string, string][]).filter(([, value]) => value)
@@ -2074,6 +2269,19 @@ function PlantDetailPage({ plantId }: { plantId: string }) {
                   </div>
                 ))}
               </div>
+              {plant.nativityBasis && (
+                <p
+                  style={{
+                    fontFamily: "'Public Sans', sans-serif",
+                    fontSize: 12,
+                    lineHeight: 1.5,
+                    color: "#7A776F",
+                    marginTop: 14,
+                  }}
+                >
+                  Why: {plant.nativityBasis}
+                </p>
+              )}
             </div>
             )}
 

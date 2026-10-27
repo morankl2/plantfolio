@@ -19,7 +19,8 @@ CREATE TABLE meta (key TEXT PRIMARY KEY, value TEXT);
 CREATE TABLE plants (plant_id TEXT PRIMARY KEY, scientific_name TEXT, common_name TEXT);
 CREATE TABLE traits (plant_id TEXT, trait TEXT, value TEXT, value_num REAL, basis TEXT, confidence TEXT);
 CREATE TABLE names (plant_id TEXT NOT NULL, name TEXT NOT NULL, name_normalized TEXT NOT NULL, kind TEXT NOT NULL, source_id TEXT, source_key TEXT);
-CREATE TABLE plant_regions (plant_id TEXT, region TEXT, nativity TEXT);
+CREATE TABLE plant_regions (plant_id TEXT NOT NULL, region TEXT NOT NULL, nativity TEXT NOT NULL, confidence TEXT, basis TEXT, basis_text TEXT, PRIMARY KEY (plant_id, region));
+CREATE TABLE zip_regions (zip TEXT PRIMARY KEY, region TEXT, county_fips TEXT, county TEXT, spans_counties INTEGER, spans_states INTEGER);
 CREATE TABLE photos (plant_id TEXT NOT NULL, position INTEGER NOT NULL, source_id TEXT, photo_id TEXT,
   url_medium TEXT, url_large TEXT, page_url TEXT, license_name TEXT, license_url TEXT, attribution TEXT,
   PRIMARY KEY (plant_id, position));
@@ -55,6 +56,15 @@ def build_db(path, schema_version="1.0.1"):
     conn.executescript(SCHEMA)
     if schema_version is not None:
         conn.execute("INSERT INTO meta VALUES ('schema_version', ?)", (schema_version,))
+    conn.execute("INSERT INTO meta VALUES ('regions_with_plant_data', 'US-MD')")
+    conn.executemany(
+        "INSERT INTO zip_regions VALUES (?, ?, '00000', ?, ?, 0)",
+        [
+            ("20850", "US-MD", "Montgomery County", 0),
+            ("21204", "US-MD", "Baltimore County", 1),
+            ("07030", "US-NJ", "Hudson County", 0),
+        ],
+    )
     conn.executemany(
         "INSERT INTO plants VALUES (?, ?, ?)",
         [
@@ -104,9 +114,15 @@ def build_db(path, schema_version="1.0.1"):
         ],
     )
     conn.executemany(
-        "INSERT INTO plant_regions VALUES (?, 'US-MD', ?)",
-        [(SUNNY, "native"), (SHADY, "unknown"), (TOMATO, "cultivated")],
+        "INSERT INTO plant_regions VALUES (?, 'US-MD', ?, 'high', 'basis', ?)",
+        [
+            (SUNNY, "native", "Native in Maryland because of a test."),
+            (SHADY, "unknown", "Mixed status."),
+            (TOMATO, "cultivated", "Garden plant here."),
+        ],
     )
+    # A second region the data has a row for, though it is not in regions_with_plant_data.
+    conn.execute("INSERT INTO plant_regions VALUES (?, 'US-VA', 'introduced', 'low', 'basis', 'Elsewhere.')", (SUNNY,))
     for plant in (SUNNY, SHADY, TOMATO):
         conn.execute(
             "INSERT INTO photos VALUES (?, 1, 'inat', '1', ?, ?, 'https://example.org/obs', 'CC BY', "
@@ -239,6 +255,9 @@ def test_normalized_plant_with_data(cleared_client_ctx):
     assert plant["flowering"] is True
     assert plant["edible"] is None
     assert plant["native"] is True
+    assert plant["nativity"] == "native"
+    assert plant["nativityRegion"] == "US-MD"
+    assert plant["nativityRegionName"] == "Maryland"
     assert plant["matureSize"] == "Height: 2–4 feet, Width: 1.5 feet"
     assert plant["bloomSeason"] == "Jul-Sep"
     assert plant["water"] == "Dry, Moist"
@@ -278,6 +297,7 @@ def test_missing_values_stay_empty_and_are_never_invented(cleared_client_ctx):
     assert plant["flowering"] is None
     assert plant["edible"] is None
     assert plant["native"] is None
+    assert plant["nativity"] is None
 
 
 def test_detail_uses_the_large_photo(cleared_client_ctx):
@@ -289,6 +309,86 @@ def test_detail_uses_the_large_photo(cleared_client_ctx):
 def test_unknown_plant_id_raises_not_found(cleared_client_ctx):
     with pytest.raises(PlantNotFoundError):
         cleared_client.get_plant_details("no-such-id")
+
+
+# --- nativity, the Native filter and ZIP codes ------------------------------
+
+
+def test_nativity_defaults_to_the_region_the_data_covers(cleared_client_ctx):
+    by_id = {p["id"]: p for p in cleared_client.search_plants()}
+    assert by_id[SUNNY]["nativity"] == "native"
+    assert by_id[SHADY]["nativity"] == "unknown"
+    assert by_id[TOMATO]["nativity"] == "cultivated"
+    assert by_id[BARE]["nativity"] is None
+    assert all(p["nativityRegion"] == "US-MD" for p in by_id.values())
+
+
+def test_native_filter_keeps_only_native_plants(cleared_client_ctx):
+    assert names(cleared_client.search_plants(native=True)) == ["Sunny coneflower"]
+
+
+def test_native_filter_combines_with_other_filters(cleared_client_ctx):
+    assert cleared_client.search_plants(native=True, sunlight=["Shade"]) == []
+    assert names(cleared_client.search_plants(native=True, sunlight=["Full Sun"])) == ["Sunny coneflower"]
+
+
+def test_nativity_is_for_the_region_asked_about(cleared_client_ctx):
+    plant = next(p for p in cleared_client.search_plants(region="US-VA") if p["id"] == SUNNY)
+    assert plant["nativity"] == "introduced"
+    assert plant["nativityRegionName"] == "Virginia"
+    assert plant["native"] is None
+    assert cleared_client.search_plants(native=True, region="US-VA") == []
+
+
+def test_a_region_with_no_plant_data_has_no_nativity(cleared_client_ctx):
+    plants = cleared_client.search_plants(region="US-NJ")
+    assert len(plants) == 4  # the plants themselves are not region-specific
+    assert all(p["nativity"] is None for p in plants)
+    assert cleared_client.search_plants(native=True, region="US-NJ") == []
+
+
+def test_detail_has_the_reason_for_the_nativity(cleared_client_ctx):
+    plant = cleared_client.get_plant_details(SUNNY)
+    assert plant["nativityBasis"] == "Native in Maryland because of a test."
+    assert plant["nativityConfidence"] == "high"
+    assert cleared_client.get_plant_details(SUNNY, region="US-VA")["nativity"] == "introduced"
+
+
+def test_zip_lookup(cleared_client_ctx):
+    found = cleared_client.lookup_zip("20850")
+    assert found == {
+        "zip": "20850",
+        "region": "US-MD",
+        "regionName": "Maryland",
+        "state": "MD",
+        "county": "Montgomery County",
+        "approximate": False,
+        "hasPlantData": True,
+    }
+
+
+def test_zip_in_a_region_without_plant_data(cleared_client_ctx):
+    found = cleared_client.lookup_zip("07030")
+    assert found["regionName"] == "New Jersey"
+    assert found["hasPlantData"] is False
+
+
+def test_zip_spanning_counties_is_marked_approximate(cleared_client_ctx):
+    assert cleared_client.lookup_zip("21204")["approximate"] is True
+
+
+def test_unknown_zip_is_none_and_a_bad_zip_is_an_error(cleared_client_ctx):
+    assert cleared_client.lookup_zip("99999") is None
+    for bad in ("2085", "abcde", "208500", ""):
+        with pytest.raises(ValueError):
+            cleared_client.lookup_zip(bad)
+
+
+def test_region_names():
+    assert cleared_client.region_name("US-MD") == "Maryland"
+    assert cleared_client.region_name("US-DC") == "District of Columbia"
+    assert cleared_client.region_name("XX-ZZ") == "XX-ZZ"
+    assert cleared_client.region_name(None) == ""
 
 
 # --- the file itself --------------------------------------------------------
@@ -358,6 +458,27 @@ def test_route_name_search(client, cleared_app):
 
 def test_route_name_search_is_ignored_by_the_other_sources(client):
     assert len(client.get("/api/plants?source=mock&q=zzzz").get_json()) == 15
+
+
+def test_route_native_filter_and_region(client, cleared_app):
+    assert names(client.get("/api/plants?source=cleared&native=true").get_json()) == ["Sunny coneflower"]
+    assert client.get("/api/plants?source=cleared&native=true&region=US-VA").get_json() == []
+    detail = client.get(f"/api/plants/{SUNNY}?source=cleared&region=US-VA").get_json()
+    assert detail["nativity"] == "introduced"
+
+
+def test_route_zip_lookup(client, cleared_app):
+    response = client.get("/api/regions/zip/20850")
+    assert response.status_code == 200
+    assert response.get_json()["county"] == "Montgomery County"
+    assert client.get("/api/regions/zip/99999").status_code == 404
+    bad = client.get("/api/regions/zip/12")
+    assert bad.status_code == 400
+    assert "five digits" in bad.get_json()["error"]
+
+
+def test_route_zip_lookup_reports_missing_data_as_502(client):
+    assert client.get("/api/regions/zip/20850").status_code == 502
 
 
 def test_route_detail_and_unknown_id(client, cleared_app):

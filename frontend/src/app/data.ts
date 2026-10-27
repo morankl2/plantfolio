@@ -3,6 +3,21 @@ export type Sunlight = "Full Sun" | "Partial" | "Shade";
 // Where plant data comes from; the backend's `?source=` values.
 export type PlantSource = "cleared" | "mock" | "perenual";
 
+// How a plant relates to a region ("native in Maryland"). "cultivated" means grown
+// in gardens there but not living wild; "unknown" means the sources disagree or are silent.
+export type Nativity = "native" | "introduced" | "cultivated" | "unknown";
+
+// Where a ZIP code is, from the cleared plant data (cleared source only).
+export interface ZipLocation {
+  zip: string;
+  region: string;
+  regionName: string;
+  state: string;
+  county: string;
+  approximate: boolean;
+  hasPlantData: boolean;
+}
+
 export interface Plant {
   id: string;
   commonName: string;
@@ -30,6 +45,43 @@ export interface Plant {
   matureSize: string;
   bloomSeason: string;
   tags: string[];
+  // Cleared source only. null = the data has no row for this region.
+  nativity?: Nativity | null;
+  nativityRegion?: string;
+  nativityRegionName?: string;
+  nativityConfidence?: string;
+  nativityBasis?: string;
+}
+
+// Short label for a tile chip; null when there is nothing to show.
+export function nativityChipLabel(plant: Plant): string | null {
+  switch (plant.nativity) {
+    case "native":
+      return "Native";
+    case "introduced":
+      return "Introduced";
+    case "cultivated":
+      return "Garden-grown only";
+    default:
+      return null;
+  }
+}
+
+// Full wording for the detail page, naming the region; "" when there is no data.
+export function nativityDetailLabel(plant: Plant): string {
+  const where = plant.nativityRegionName || "this region";
+  switch (plant.nativity) {
+    case "native":
+      return `Native to ${where}`;
+    case "introduced":
+      return `Introduced in ${where}`;
+    case "cultivated":
+      return `Garden-grown only in ${where}`;
+    case "unknown":
+      return `Unclear for ${where}`;
+    default:
+      return "";
+  }
 }
 
 // Every sunlight value a plant has, in display order (empty = no data).

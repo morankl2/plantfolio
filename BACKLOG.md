@@ -121,13 +121,23 @@ A small endpoint (or a field on the plants response) says what each source suppo
 ### PF-005: Decide the default source and the future of Perenual
 After the POC has been used for a while: make `cleared` the default, and decide when the Perenual code, its quota workarounds and its zone logic are removed.
 
-### PF-002: ZIP code box and nativity badge
-**Parked 2026-10-20** by the owner: a bigger frontend change, a second step.
-- A ZIP code box in the filter panel (instead of the zone dropdown) for sources with no zones. The ZIP is looked up in the data's `zip_regions` table and gives a region (such as `US-MD`) and a county.
-- A nativity badge on tiles and the detail page, from `plant_regions.nativity` for the user's region: native, introduced, garden-grown only, or "no data for this region".
-- A "Native to my area" filter.
-- Messages for a ZIP outside Maryland ("Maryland only for now") and for a ZIP not found ("check the ZIP").
-- Depends on: the cleared source. The data repo's mapping is in `PLANTFOLIO_MAPPING.md` (sections 2, 3 and 4).
+### PF-002: ZIP code box and nativity (mostly done 2026-10-27, cleared source only)
+Pulled forward by the owner. Built, for the **cleared source only** (the other sources do not show any of it):
+- **ZIP code box** in the filter panel, in place of the zone dropdown. Five digits are looked up in the data's `zip_regions` table (`GET /api/regions/zip/<zip>`) and show the county and state, for example "Montgomery County, MD. Nativity is shown for Maryland." A ZIP that is not in the table says so; a ZIP outside the data's coverage says "No plant data for New York yet, so nativity isn't shown." ZIP codes that span counties are marked approximate. The ZIP is a setting, not a filter: it is remembered in the browser (local storage) and "Clear" keeps it.
+- **Nativity chip on tiles:** Native, Introduced, or Garden-grown only. Nothing is shown when the data has no row for the region, or when the status is "unknown".
+- **Nativity row on the detail page** naming the region ("Native to Maryland"), with the data's reason underneath ("Why: USDA PLANTS lists it as native...").
+- **"Native" filter** under Plant Traits (406 plants for Maryland). It filters for plants native in the ZIP's region; for a region without plant data it finds nothing.
+- With no ZIP entered, nativity is shown for the first region the data covers (Maryland today); the labels always name the region.
+- Backend: `region` and `native` parameters on `/api/plants`, `region` on a plant's detail; 14 new tests (88 pass).
+
+Still open:
+- The "No plants match those filters" message still talks about sunlight and zone requirements; when the Native filter finds nothing because the region has no data, it should say that.
+- "Unknown" nativity (12 plants) is only shown on the detail page ("Unclear for Maryland").
+- The ZIP is only stored in this browser; with sign-in it could move to the user's account (PF-010 era).
+- Region names come from a fixed table of US states in `cleared_client.py`; update it if the data gains other kinds of regions.
+
+### PF-009: Source selector (done 2026-10-27)
+The header's single cycling label is now a three-button selector: **Cleared / Test / Live API**, with the active one highlighted (Live API turns terracotta because it uses your request quota). Hover text gives the full names. Changing source clears the results and cached plants, sends you back to Discover if you were on a plant page, and resets the controls that only one source has (zone for Test and Live, Native for Cleared).
 
 ---
 
@@ -153,6 +163,7 @@ A Calendar tab showing, for the plants you have tagged (Growing, Have seeds, Wan
 - Region: the windows are for Maryland until more regions exist. Showing the right region for other users needs the ZIP lookup (PF-002); until then the tab says "Maryland".
 - plantfolio side: read the new traits in `cleared_client.py` (new fields on the plant, hide when empty), the Calendar tab, tests with a fixture. The reader already tolerates a higher minor schema version.
 - Data repo items that relate: BL-010 (crop growing data, planting windows) and BL-020 (frost dates per ZIP).
+- **Update 2026-10-27:** the data repo (schema 1.3.0) now has `pruning_month` rows (102 plants), `pruning_timing`, a `planting_rules` table and `zip_frost` / `frost_stations` (frost-date planting windows for vegetables, by ZIP). The calendar can use these; plantfolio does not read them yet.
 
 ### PF-012: Planting dates and garden areas
 Turn the planting record from PF-010 into something with detail: **planted-on date** (seed or plant), **garden area**, optional **removed-on date**, quantity, notes. Users create named **garden areas** ("Front bed", "Back fence") and pick one per planting. Seeds can be given a planted date too.

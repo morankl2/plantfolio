@@ -1,4 +1,4 @@
-import type { Plant, PlantSource } from "./data";
+import type { Plant, PlantSource, ZipLocation } from "./data";
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? "http://localhost:5000";
 
@@ -9,6 +9,9 @@ export interface PlantFilters {
   // Name search. Only the cleared source searches by name on the server; for
   // the others the page filters the returned plants by name itself.
   query?: string;
+  // Cleared source only: keep plants native in `region`, and report nativity for it.
+  native?: boolean;
+  region?: string;
 }
 
 export interface AuthUser {
@@ -42,6 +45,8 @@ export async function fetchPlants(filters: PlantFilters = {}, source: PlantSourc
   if (filters.edible) params.set("edible", "true");
   if (filters.zone) params.set("zone", filters.zone);
   if (source === "cleared" && filters.query?.trim()) params.set("q", filters.query.trim());
+  if (source === "cleared" && filters.native) params.set("native", "true");
+  if (source === "cleared" && filters.region) params.set("region", filters.region);
   sourceParams(params, source);
 
   const response = await fetch(`${API_BASE_URL}/api/plants?${params.toString()}`);
@@ -49,11 +54,24 @@ export async function fetchPlants(filters: PlantFilters = {}, source: PlantSourc
   return response.json();
 }
 
-export async function fetchPlantById(id: string, source: PlantSource = "mock"): Promise<Plant> {
+export async function fetchPlantById(
+  id: string,
+  source: PlantSource = "mock",
+  region?: string
+): Promise<Plant> {
   const params = new URLSearchParams();
   sourceParams(params, source);
+  if (source === "cleared" && region) params.set("region", region);
   const response = await fetch(`${API_BASE_URL}/api/plants/${encodeURIComponent(id)}?${params.toString()}`);
   if (!response.ok) throw new Error(await errorMessage(response, `Failed to load plant ${id} (${response.status})`));
+  return response.json();
+}
+
+// Region and county for a ZIP code, or null when the ZIP is not in the data.
+export async function lookupZip(zip: string): Promise<ZipLocation | null> {
+  const response = await fetch(`${API_BASE_URL}/api/regions/zip/${encodeURIComponent(zip)}`);
+  if (response.status === 404) return null;
+  if (!response.ok) throw new Error(await errorMessage(response, `Failed to look up ZIP ${zip}`));
   return response.json();
 }
 
