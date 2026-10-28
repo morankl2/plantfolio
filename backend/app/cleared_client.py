@@ -239,6 +239,7 @@ def search_plants(
     query: str | None = None,
     native: bool | None = None,
     region: str | None = None,
+    ids: list[str] | None = None,
 ) -> list[dict]:
     """Filter the cleared plants. `zone` is accepted and ignored: the data has
     no hardiness zones (the frontend hides the zone control for this source).
@@ -252,7 +253,12 @@ def search_plants(
     `region` is the region nativity is reported for (default: the first region the
     data covers); `native` keeps only plants that are native in that region. For a
     region the data does not cover there is no nativity, so `native` finds nothing.
+
+    `ids` limits the result to those plant IDs (used to show the user's built-in lists);
+    an empty list means "none", not "all".
     """
+    if ids is not None and not ids:
+        return []
     where: list[str] = []
     params: list[str] = []
 
@@ -266,6 +272,9 @@ def search_plants(
         params.extend(tags)
     if edible:
         where.append("v.edible = 'yes'")
+    if ids:
+        where.append(f"v.plant_id IN ({','.join('?' * len(ids))})")
+        params.extend(ids)
     if native:
         where.append("pr.nativity = 'native'")
     normalized = normalize_query(query)

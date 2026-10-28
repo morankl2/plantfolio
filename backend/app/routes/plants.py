@@ -9,6 +9,7 @@ from app.perenual_client import PerenualError, get_plant_details, search_plants
 plants_bp = Blueprint("plants", __name__, url_prefix="/api/plants")
 
 VALID_SOURCES = ("cleared", "mock", "perenual")
+MAX_IDS = 500  # plants fetched by id at once (the cleared source only)
 
 
 class InvalidSource(ValueError):
@@ -55,6 +56,8 @@ def list_plants():
     query = request.args.get("q", "").strip() or None
     native = request.args.get("native", "").lower() in ("1", "true", "yes")
     region = request.args.get("region") or None
+    raw_ids = request.args.get("ids")
+    ids = [i for i in raw_ids.split(",") if i][:MAX_IDS] if raw_ids is not None else None
     source = _requested_source()
 
     try:
@@ -68,6 +71,7 @@ def list_plants():
                 query=query,
                 native=native or None,
                 region=region,
+                ids=ids,
             )
         else:
             plants = search_plants(

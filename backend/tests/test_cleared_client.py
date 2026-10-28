@@ -235,6 +235,19 @@ def test_name_search_combines_with_filters(cleared_client_ctx):
     assert cleared_client.search_plants(query="sunny", sunlight=["Shade"]) == []
 
 
+def test_ids_limit_the_result_to_those_plants(cleared_client_ctx):
+    assert names(cleared_client.search_plants(ids=[SHADY, SUNNY])) == ["Shady fern", "Sunny coneflower"]
+    assert names(cleared_client.search_plants(ids=[TOMATO, "no-such-id"])) == ["Tomato crop"]
+
+
+def test_an_empty_list_of_ids_means_no_plants_not_all_plants(cleared_client_ctx):
+    assert cleared_client.search_plants(ids=[]) == []
+
+
+def test_ids_combine_with_filters(cleared_client_ctx):
+    assert names(cleared_client.search_plants(ids=[SHADY, SUNNY], sunlight=["Shade"])) == ["Shady fern"]
+
+
 def test_normalize_query():
     assert cleared_client.normalize_query("Black-eyed  Susan") == "black eyed susan"
     assert cleared_client.normalize_query("Aaron\u2019s rod") == "aarons rod"
@@ -465,6 +478,12 @@ def test_route_native_filter_and_region(client, cleared_app):
     assert client.get("/api/plants?source=cleared&native=true&region=US-VA").get_json() == []
     detail = client.get(f"/api/plants/{SUNNY}?source=cleared&region=US-VA").get_json()
     assert detail["nativity"] == "introduced"
+
+
+def test_route_ids(client, cleared_app):
+    found = client.get(f"/api/plants?source=cleared&ids={SUNNY},{TOMATO}").get_json()
+    assert names(found) == ["Sunny coneflower", "Tomato crop"]
+    assert client.get("/api/plants?source=cleared&ids=").get_json() == []
 
 
 def test_route_zip_lookup(client, cleared_app):

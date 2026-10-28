@@ -3,6 +3,10 @@ export type Sunlight = "Full Sun" | "Partial" | "Shade";
 // Where plant data comes from; the backend's `?source=` values.
 export type PlantSource = "cleared" | "mock" | "perenual";
 
+// A status the signed-in user has set on a plant. "growing" means at least one active
+// planting; the rest are tags. Shown as four built-in lists (Have extra = either extra).
+export type PlantStatus = "growing" | "has_seeds" | "want" | "extra_plant" | "extra_seeds";
+
 // How a plant relates to a region ("native in Maryland"). "cultivated" means grown
 // in gardens there but not living wild; "unknown" means the sources disagree or are silent.
 export type Nativity = "native" | "introduced" | "cultivated" | "unknown";

@@ -1,4 +1,4 @@
-import type { Plant, PlantSource, ZipLocation } from "./data";
+import type { Plant, PlantSource, PlantStatus, ZipLocation } from "./data";
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? "http://localhost:5000";
 
@@ -73,6 +73,34 @@ export async function lookupZip(zip: string): Promise<ZipLocation | null> {
   if (response.status === 404) return null;
   if (!response.ok) throw new Error(await errorMessage(response, `Failed to look up ZIP ${zip}`));
   return response.json();
+}
+
+// Several cleared plants by id, for the built-in lists. An empty list gives no plants.
+export async function fetchPlantsByIds(ids: string[], source: PlantSource, region?: string): Promise<Plant[]> {
+  if (ids.length === 0) return [];
+  const params = new URLSearchParams({ ids: ids.join(",") });
+  sourceParams(params, source);
+  if (source === "cleared" && region) params.set("region", region);
+  const response = await fetch(`${API_BASE_URL}/api/plants?${params.toString()}`);
+  if (!response.ok) throw new Error(await errorMessage(response, `Failed to load plants (${response.status})`));
+  return response.json();
+}
+
+// Every plant the signed-in user has a status on. Not signed in gives nothing.
+export async function fetchMyPlants(): Promise<Record<string, PlantStatus[]>> {
+  const response = await fetch(`${API_BASE_URL}/api/my-plants`, { credentials: "include" });
+  if (response.status === 401) return {};
+  if (!response.ok) throw new Error(await errorMessage(response, "Failed to load your plants"));
+  return (await response.json()).plants;
+}
+
+export async function setPlantStatus(plantId: string, status: PlantStatus, on: boolean): Promise<PlantStatus[]> {
+  const response = await fetch(`${API_BASE_URL}/api/my-plants/${encodeURIComponent(plantId)}/${status}`, {
+    method: on ? "PUT" : "DELETE",
+    credentials: "include",
+  });
+  if (!response.ok) throw new Error(await errorMessage(response, "Couldn't save that change"));
+  return (await response.json()).statuses;
 }
 
 export async function googleSignIn(credential: string): Promise<AuthUser> {

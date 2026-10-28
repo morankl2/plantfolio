@@ -1,3 +1,5 @@
+from datetime import date
+
 from app.extensions import db
 
 
@@ -46,3 +48,37 @@ class SavedPlant(db.Model):
     list_id = db.Column(db.Integer, db.ForeignKey("plant_lists.id"), nullable=False)
     plant_id = db.Column(db.String(120), nullable=False)
     notes = db.Column(db.Text, nullable=True)
+
+
+class PlantTag(db.Model):
+    """A status a user has set on a plant: want, has_seeds, extra_plant or extra_seeds.
+
+    `plant_id` is the plant data's own ID (a string). It is deliberately not a foreign key:
+    the plant data lives in a separate, read-only store (docs/DATA_INTEGRATION.md).
+    "Growing" is not a tag; it is derived from plantings (see Planting).
+    """
+
+    __tablename__ = "plant_tags"
+    __table_args__ = (db.UniqueConstraint("user_id", "plant_id", "tag", name="uq_user_plant_tag"),)
+
+    id = db.Column(db.Integer, primary_key=True)
+    user_id = db.Column(db.Integer, db.ForeignKey("users.id"), nullable=False, index=True)
+    plant_id = db.Column(db.String(120), nullable=False)
+    tag = db.Column(db.String(20), nullable=False)
+    set_on = db.Column(db.Date, nullable=False, default=date.today)
+
+
+class Planting(db.Model):
+    """One planting of a plant by a user. A user is "growing" a plant while at least one
+    of its plantings has no `removed_on`. The date is optional (None = unknown).
+    """
+
+    __tablename__ = "plantings"
+
+    id = db.Column(db.Integer, primary_key=True)
+    user_id = db.Column(db.Integer, db.ForeignKey("users.id"), nullable=False, index=True)
+    plant_id = db.Column(db.String(120), nullable=False)
+    kind = db.Column(db.String(10), nullable=False, default="plant")  # "plant" or "seed"
+    planted_on = db.Column(db.Date, nullable=True)
+    removed_on = db.Column(db.Date, nullable=True)
+    created_on = db.Column(db.Date, nullable=False, default=date.today)

@@ -16,11 +16,13 @@ def create_app(config_object: type[Config] = Config) -> Flask:
     from app.routes.lists import lists_bp
     from app.routes.auth import auth_bp
     from app.routes.regions import regions_bp
+    from app.routes.my_plants import my_plants_bp
 
     app.register_blueprint(plants_bp)
     app.register_blueprint(lists_bp)
     app.register_blueprint(auth_bp)
     app.register_blueprint(regions_bp)
+    app.register_blueprint(my_plants_bp)
 
     with app.app_context():
         db.create_all()

@@ -1,6 +1,6 @@
 # My plants and the calendar: design
 
-Written 2026-10-20 from the owner's decisions. **Status: design only, nothing is built.** The work items are PF-010 to PF-013 in `BACKLOG.md`.
+Written 2026-10-20 from the owner's decisions. **Status: PF-010 (tags, built-in lists, planting record) was built on 2026-10-27 for the cleared source; PF-011 to PF-013 are design only.** The work items are in `BACKLOG.md`.
 
 ## What the owner wants
 

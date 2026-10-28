@@ -2,12 +2,15 @@ import { useState, useMemo, useEffect, useRef, createContext, useContext, ReactN
 import {
   Leaf, Bookmark, BookmarkCheck, Sun, CloudSun, Cloud, Droplets, ChevronRight, ChevronDown,
   X, Plus, Search, Check, Camera, Settings, HelpCircle, LogOut, Pencil,
-  Trash2, User, SendHorizonal,
+  Trash2, User, SendHorizonal, Sprout, Bean, Heart, ArrowLeftRight,
 } from "lucide-react";
 import {
-  Plant, PlantList, PlantSource, Sunlight, ZipLocation, sunlightOf, nativityChipLabel, nativityDetailLabel,
+  Plant, PlantList, PlantSource, PlantStatus, Sunlight, ZipLocation, sunlightOf, nativityChipLabel, nativityDetailLabel,
 } from "./data";
-import { fetchPlants, fetchPlantById, lookupZip, googleSignIn, getCurrentUser, signOutRequest, type AuthUser } from "./api";
+import {
+  fetchPlants, fetchPlantById, fetchPlantsByIds, fetchMyPlants, setPlantStatus, lookupZip,
+  googleSignIn, getCurrentUser, signOutRequest, type AuthUser,
+} from "./api";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -16,6 +19,7 @@ type Page =
   | { name: "plant"; id: string }
   | { name: "lists" }
   | { name: "list"; id: string }
+  | { name: "myplants"; key: MyListKey }
   | { name: "support" }
   | { name: "about" }
   | { name: "account" };
@@ -78,6 +82,12 @@ interface AppCtx {
   cachePlants: (plants: Plant[]) => void;
   getPlantsForList: (list: PlantList) => Plant[];
   getCachedPlants: () => Plant[];
+  // My plants (cleared source): the signed-in user's statuses, by plant id. The four
+  // built-in lists are computed from this, so a plant moves between them by changing status.
+  myPlants: Record<string, PlantStatus[]>;
+  myPlantsReady: boolean;
+  statusesOf: (plantId: string) => PlantStatus[];
+  setStatus: (plantId: string, status: PlantStatus, on: boolean) => void;
 }
 
 const AppContext = createContext<AppCtx | null>(null);
@@ -98,6 +108,50 @@ const SIDEBAR_FILTER_DEFAULTS: SidebarFilters = {
   edibleOnly: false,
   nativeOnly: false,
 };
+
+// ─── My plants: statuses and the four built-in lists ──────────────────────────
+
+type MyListKey = "growing" | "has_seeds" | "want" | "extra";
+
+const STATUS_ORDER: PlantStatus[] = ["growing", "has_seeds", "want", "extra_plant", "extra_seeds"];
+
+const MY_LISTS: Array<{
+  key: MyListKey;
+  label: string;
+  icon: typeof Sun;
+  statuses: PlantStatus[];
+  bg: string;
+  fg: string;
+  border: string;
+  empty: string;
+}> = [
+  {
+    key: "growing", label: "Growing", icon: Sprout, statuses: ["growing"],
+    bg: "#DCE7D2", fg: "#2F4A3D", border: "#B9CDA6",
+    empty: "Nothing growing yet. Tag a plant as Growing on its page.",
+  },
+  {
+    key: "has_seeds", label: "Have seeds", icon: Bean, statuses: ["has_seeds"],
+    bg: "#F3E6B8", fg: "#6F5410", border: "#E2CF8E",
+    empty: "No seeds yet. Tag a plant as Have seeds on its page.",
+  },
+  {
+    key: "want", label: "Want", icon: Heart, statuses: ["want"],
+    bg: "#F2D5D5", fg: "#8A3B3B", border: "#E4B4B4",
+    empty: "Nothing on your want list yet. Tag a plant as Want on its page.",
+  },
+  {
+    key: "extra", label: "Have extra", icon: ArrowLeftRight, statuses: ["extra_plant", "extra_seeds"],
+    bg: "#E4DCEB", fg: "#4F3F6B", border: "#CBBEDB",
+    empty: "No extras yet. Tag a plant as Have extra on its page.",
+  },
+];
+
+function plantIdsFor(item: (typeof MY_LISTS)[number], myPlants: Record<string, PlantStatus[]>): string[] {
+  return Object.entries(myPlants)
+    .filter(([, have]) => have.some((s) => item.statuses.includes(s)))
+    .map(([id]) => id);
+}
 
 // Short on purpose: three of these sit in the header next to the nav. The hover
 // text on each button has the full name.
@@ -127,6 +181,8 @@ function AppProvider({ children }: { children: ReactNode }) {
     // Older versions stored a test-mode flag instead.
     return localStorage.getItem("plantfolio_test_mode") === "false" ? "perenual" : "mock";
   });
+  const [myPlants, setMyPlants] = useState<Record<string, PlantStatus[]>>({});
+  const [myPlantsReady, setMyPlantsReady] = useState(false);
   const [location, setLocationState] = useState<ZipLocation | null>(() => {
     try {
       const stored = localStorage.getItem("plantfolio_location");
@@ -144,6 +200,29 @@ function AppProvider({ children }: { children: ReactNode }) {
       .then(setCurrentUser)
       .catch(() => setCurrentUser(null));
   }, []);
+
+  // Load the user's plant statuses when they sign in; forget them when they sign out.
+  useEffect(() => {
+    if (!currentUser) {
+      setMyPlants({});
+      setMyPlantsReady(false);
+      return;
+    }
+    let cancelled = false;
+    fetchMyPlants()
+      .then((found) => {
+        if (!cancelled) setMyPlants(found);
+      })
+      .catch(() => {
+        if (!cancelled) setMyPlants({});
+      })
+      .finally(() => {
+        if (!cancelled) setMyPlantsReady(true);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [currentUser?.id]);
 
   const cachePlants = (plants: Plant[]) =>
     setPlantsCache((prev) => {
@@ -228,6 +307,7 @@ function AppProvider({ children }: { children: ReactNode }) {
       setSearchTrigger(0);
       setPlantsCache(new Map());
       if (page.name === "plant") setPage({ name: "discover" });
+      if (page.name === "myplants") setPage({ name: "lists" });
       // Some controls exist for one source only: zone for the others, Native for cleared.
       if (next === "cleared") {
         setFiltersState((prev) => ({ ...prev, zone: "" }));
@@ -252,6 +332,23 @@ function AppProvider({ children }: { children: ReactNode }) {
     cachePlants,
     getPlantsForList,
     getCachedPlants,
+    myPlants,
+    myPlantsReady,
+    statusesOf: (plantId) => myPlants[plantId] ?? [],
+    setStatus: (plantId, status, on) => {
+      const before = myPlants[plantId] ?? [];
+      const next = STATUS_ORDER.filter((s) => (s === status ? on : before.includes(s)));
+      const store = (statuses: PlantStatus[]) =>
+        setMyPlants((prev) => {
+          const copy = { ...prev };
+          if (statuses.length > 0) copy[plantId] = statuses;
+          else delete copy[plantId];
+          return copy;
+        });
+      store(next);
+      // Shown at once; put it back if the server could not save it.
+      setPlantStatus(plantId, status, on).catch(() => store(before));
+    },
   };
 
   return <AppContext.Provider value={ctx}>{children}</AppContext.Provider>;
@@ -906,6 +1003,127 @@ function SaveModal({ plantId, onClose }: { plantId: string; onClose: () => void 
 // photos). One wording everywhere: "Photo: " + the credit text exactly as the
 // source supplies it. On the detail page it is followed by links to the license
 // and to the photo's own page. Nothing is shown for plants without a credit.
+// Small icon badges for the statuses the user has set on a plant (Growing, Have seeds,
+// Want, Have extra). Cleared source only, and only when signed in.
+function StatusBadges({ plantId }: { plantId: string }) {
+  const { source, statusesOf } = useApp();
+  if (source !== "cleared") return null;
+  const have = statusesOf(plantId);
+  const shown = MY_LISTS.filter((item) => item.statuses.some((s) => have.includes(s)));
+  if (shown.length === 0) return null;
+  return (
+    <div style={{ position: "absolute", top: 10, left: 10, display: "flex", gap: 4, pointerEvents: "none" }}>
+      {shown.map((item) => {
+        const Icon = item.icon;
+        return (
+          <span
+            key={item.key}
+            title={item.label}
+            style={{
+              width: 26,
+              height: 26,
+              borderRadius: "50%",
+              backgroundColor: item.bg,
+              border: `1px solid ${item.border}`,
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "center",
+            }}
+          >
+            <Icon size={14} strokeWidth={1.8} color={item.fg} />
+          </span>
+        );
+      })}
+    </div>
+  );
+}
+
+// The "My plant" chips on the detail page: Growing, Have seeds, Want, Have extra (plant
+// and/or seeds). Several can be on at once. Not signed in: tapping one asks to sign in.
+function MyPlantPanel({ plant }: { plant: Plant }) {
+  const { isSignedIn, statusesOf, setStatus } = useApp();
+  const [gateOpen, setGateOpen] = useState(false);
+  const [extraOpen, setExtraOpen] = useState(false);
+  const have = statusesOf(plant.id);
+  const extraOn = have.includes("extra_plant") || have.includes("extra_seeds");
+
+  const toggle = (status: PlantStatus) => {
+    if (!isSignedIn) {
+      setGateOpen(true);
+      return;
+    }
+    setStatus(plant.id, status, !have.includes(status));
+  };
+
+  const chip = (
+    item: (typeof MY_LISTS)[number],
+    on: boolean,
+    onClick: () => void,
+    label: string = item.label,
+    small = false
+  ) => {
+    const Icon = item.icon;
+    return (
+      <button
+        key={label}
+        onClick={onClick}
+        aria-pressed={on}
+        style={{
+          display: "flex",
+          alignItems: "center",
+          gap: 6,
+          padding: small ? "4px 10px" : "6px 12px",
+          borderRadius: 999,
+          cursor: "pointer",
+          fontFamily: "'Public Sans', sans-serif",
+          fontSize: small ? 12 : 13,
+          fontWeight: on ? 500 : 400,
+          backgroundColor: on ? item.bg : "transparent",
+          color: on ? item.fg : "#7A776F",
+          border: `1px solid ${on ? item.border : "#D8C3A5"}`,
+        }}
+      >
+        {!small && <Icon size={14} strokeWidth={1.8} />}
+        {label}
+        {item.key === "extra" && !small && <ChevronDown size={12} strokeWidth={1.8} />}
+      </button>
+    );
+  };
+
+  const extra = MY_LISTS[3];
+  return (
+    <div>
+      <p
+        style={{
+          fontFamily: "'Public Sans', sans-serif",
+          fontSize: 10,
+          fontWeight: 700,
+          color: "#9CAF88",
+          textTransform: "uppercase",
+          letterSpacing: "0.07em",
+          marginBottom: 8,
+        }}
+      >
+        My plant
+      </p>
+      <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
+        {chip(MY_LISTS[0], have.includes("growing"), () => toggle("growing"))}
+        {chip(MY_LISTS[1], have.includes("has_seeds"), () => toggle("has_seeds"))}
+        {chip(MY_LISTS[2], have.includes("want"), () => toggle("want"))}
+        {chip(extra, extraOn, () => (isSignedIn ? setExtraOpen((open) => !open) : setGateOpen(true)))}
+      </div>
+      {(extraOpen || extraOn) && isSignedIn && (
+        <div style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 8 }}>
+          <span style={{ fontFamily: "'Public Sans', sans-serif", fontSize: 12, color: "#7A776F" }}>Extra of</span>
+          {chip(extra, have.includes("extra_plant"), () => toggle("extra_plant"), "Plant", true)}
+          {chip(extra, have.includes("extra_seeds"), () => toggle("extra_seeds"), "Seeds", true)}
+        </div>
+      )}
+      {gateOpen && <GateModal onClose={() => setGateOpen(false)} />}
+    </div>
+  );
+}
+
 // Whether the plant is native, introduced or garden-grown only in the user's region.
 // Nothing is shown when the data has no row for the region (or the status is unclear).
 function NativityChip({ plant }: { plant: Plant }) {
@@ -1051,6 +1269,7 @@ function PlantCard({ plant }: { plant: Plant }) {
             }}
           />
           <PhotoCredit plant={plant} variant="tile" />
+          <StatusBadges plantId={plant.id} />
           <button
             onClick={(e) => {
               e.stopPropagation();
@@ -2285,6 +2504,8 @@ function PlantDetailPage({ plantId }: { plantId: string }) {
             </div>
             )}
 
+            {source === "cleared" && <MyPlantPanel plant={plant} />}
+
             {/* Save button */}
             <button
               onClick={() => {
@@ -2496,7 +2717,7 @@ function NewListCard({ onClick }: { onClick: () => void }) {
 // ─── My Lists Page ────────────────────────────────────────────────────────────
 
 function MyListsPage() {
-  const { isSignedIn, userLists, setPage, createList, getPlantsForList } = useApp();
+  const { isSignedIn, userLists, setPage, createList, getPlantsForList, source, myPlants } = useApp();
   const [showCreate, setShowCreate] = useState(false);
   const [newName, setNewName] = useState("");
   const [newEmoji, setNewEmoji] = useState("🌿");
@@ -2628,6 +2849,98 @@ function MyListsPage() {
           <Plus size={15} strokeWidth={2.2} /> New list
         </button>
       </div>
+
+      {source === "cleared" && (
+        <div style={{ marginBottom: 36 }}>
+          <div style={{ display: "flex", alignItems: "baseline", gap: 10, marginBottom: 12 }}>
+            <h2
+              style={{
+                fontFamily: "'Fraunces', Georgia, serif",
+                fontSize: 20,
+                fontWeight: 500,
+                color: "#2F4A3D",
+              }}
+            >
+              My plants
+            </h2>
+            <span style={{ fontFamily: "'Public Sans', sans-serif", fontSize: 12, color: "#9CAF88" }}>
+              Updates automatically when you tag a plant
+            </span>
+          </div>
+          <div
+            style={{
+              display: "grid",
+              gridTemplateColumns: "repeat(auto-fill, minmax(200px, 1fr))",
+              gap: 14,
+            }}
+          >
+            {MY_LISTS.map((item) => {
+              const Icon = item.icon;
+              const count = plantIdsFor(item, myPlants).length;
+              return (
+                <button
+                  key={item.key}
+                  onClick={() => setPage({ name: "myplants", key: item.key })}
+                  style={{
+                    display: "flex",
+                    alignItems: "center",
+                    gap: 12,
+                    padding: "14px 16px",
+                    borderRadius: 14,
+                    backgroundColor: "#FAF7F1",
+                    border: "1px solid #E8E2D4",
+                    cursor: "pointer",
+                    textAlign: "left",
+                  }}
+                >
+                  <span
+                    style={{
+                      width: 38,
+                      height: 38,
+                      borderRadius: "50%",
+                      backgroundColor: item.bg,
+                      border: `1px solid ${item.border}`,
+                      display: "flex",
+                      alignItems: "center",
+                      justifyContent: "center",
+                      flexShrink: 0,
+                    }}
+                  >
+                    <Icon size={18} strokeWidth={1.8} color={item.fg} />
+                  </span>
+                  <span>
+                    <span
+                      style={{
+                        display: "block",
+                        fontFamily: "'Fraunces', Georgia, serif",
+                        fontSize: 16,
+                        fontWeight: 500,
+                        color: "#2F4A3D",
+                      }}
+                    >
+                      {item.label}
+                    </span>
+                    <span style={{ fontFamily: "'Public Sans', sans-serif", fontSize: 12, color: "#7A776F" }}>
+                      {count} {count === 1 ? "plant" : "plants"}
+                    </span>
+                  </span>
+                </button>
+              );
+            })}
+          </div>
+          <h2
+            style={{
+              fontFamily: "'Fraunces', Georgia, serif",
+              fontSize: 20,
+              fontWeight: 500,
+              color: "#2F4A3D",
+              margin: "32px 0 12px",
+            }}
+          >
+            Your lists
+          </h2>
+        </div>
+      )}
 
       {userLists.length === 0 ? (
         <div
@@ -2818,6 +3131,125 @@ function MyListsPage() {
 }
 
 // ─── List Detail Page ─────────────────────────────────────────────────────────
+
+// One of the four automatic lists (Growing, Have seeds, Want, Have extra). Which plants are
+// in it is worked out from the user's statuses; the plants themselves are fetched by id.
+function MyPlantsListPage({ listKey }: { listKey: MyListKey }) {
+  const { myPlants, myPlantsReady, setPage, cachePlants, location } = useApp();
+  const item = MY_LISTS.find((l) => l.key === listKey) ?? MY_LISTS[0];
+  const Icon = item.icon;
+  const ids = plantIdsFor(item, myPlants);
+  const idsKey = [...ids].sort().join(",");
+  const [plants, setPlants] = useState<Plant[] | null>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!myPlantsReady) return;
+    let cancelled = false;
+    setError(null);
+    if (ids.length === 0) {
+      setPlants([]);
+      return;
+    }
+    fetchPlantsByIds(ids, "cleared", location?.region)
+      .then((found) => {
+        if (cancelled) return;
+        setPlants(found);
+        cachePlants(found);
+      })
+      .catch((err) => {
+        if (!cancelled) setError(err instanceof Error ? err.message : "Failed to load plants");
+      });
+    return () => {
+      cancelled = true;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [idsKey, location?.region, myPlantsReady]);
+
+  const muted = { fontFamily: "'Public Sans', sans-serif", fontSize: 14, color: "#7A776F" } as const;
+
+  return (
+    <div style={{ maxWidth: 1000, margin: "0 auto", padding: "32px 40px 60px" }}>
+      <div
+        style={{
+          display: "flex",
+          alignItems: "center",
+          gap: 6,
+          marginBottom: 24,
+          fontFamily: "'Public Sans', sans-serif",
+          fontSize: 13,
+          color: "#9CAF88",
+        }}
+      >
+        <button
+          onClick={() => setPage({ name: "lists" })}
+          style={{ color: "#9CAF88", background: "none", border: "none", cursor: "pointer", padding: 0 }}
+        >
+          My Lists
+        </button>
+        <ChevronRight size={13} strokeWidth={1.5} color="#D8C3A5" />
+        <span style={{ color: "#2F4A3D" }}>{item.label}</span>
+      </div>
+
+      <div style={{ display: "flex", alignItems: "center", gap: 14, marginBottom: 28 }}>
+        <span
+          style={{
+            width: 46,
+            height: 46,
+            borderRadius: "50%",
+            backgroundColor: item.bg,
+            border: `1px solid ${item.border}`,
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+          }}
+        >
+          <Icon size={22} strokeWidth={1.8} color={item.fg} />
+        </span>
+        <div>
+          <h1 style={{ fontFamily: "'Fraunces', Georgia, serif", fontSize: 28, fontWeight: 500, color: "#2F4A3D" }}>
+            {item.label}
+          </h1>
+          <p style={{ fontFamily: "'Public Sans', sans-serif", fontSize: 13, color: "#9CAF88", marginTop: 4 }}>
+            {ids.length} {ids.length === 1 ? "plant" : "plants"} · Updates automatically when you tag a plant
+          </p>
+        </div>
+      </div>
+
+      {error ? (
+        <p style={muted}>{error}</p>
+      ) : plants === null || !myPlantsReady ? (
+        <p style={muted}>Loading plants…</p>
+      ) : plants.length === 0 ? (
+        <div style={{ display: "flex", flexDirection: "column", alignItems: "center", padding: "70px 0", gap: 14 }}>
+          <p style={muted}>{item.empty}</p>
+          <button
+            onClick={() => setPage({ name: "discover" })}
+            style={{
+              padding: "10px 22px",
+              borderRadius: 10,
+              backgroundColor: "#C77B4D",
+              color: "#F6F1E7",
+              border: "none",
+              fontFamily: "'Public Sans', sans-serif",
+              fontSize: 13,
+              fontWeight: 500,
+              cursor: "pointer",
+            }}
+          >
+            Browse plants
+          </button>
+        </div>
+      ) : (
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(228px, 1fr))", gap: 20 }}>
+          {plants.map((plant) => (
+            <PlantCard key={plant.id} plant={plant} />
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
 
 function ListDetailPage({ listId }: { listId: string }) {
   const { userLists, setPage, removeFromList, deleteList, renameList, getPlantsForList } = useApp();
@@ -4047,6 +4479,7 @@ function AppShell() {
             {page.name === "plant" && <PlantDetailPage plantId={page.id} />}
             {page.name === "lists" && <MyListsPage />}
             {page.name === "list" && <ListDetailPage listId={page.id} />}
+            {page.name === "myplants" && <MyPlantsListPage listKey={page.key} />}
             {page.name === "support" && <SupportPage />}
             {page.name === "about" && <AboutPage />}
             {page.name === "account" && <AccountPage />}

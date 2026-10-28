@@ -147,14 +147,24 @@ Added 2026-10-20. Design and reasoning are in `docs/MY_PLANTS_DESIGN.md`. **Not 
 
 Shared prerequisite: tags and plantings belong to a signed-in user, so Google sign-in has to work (locally: a Google Client ID in both `.env` files and `http://localhost:5173` as an authorized origin; on Render: PF-008). The first part of PF-007 (sign-in set up, lists tested with cleared plants) is the natural place to do that once.
 
-### PF-010: My plants: tags, built-in lists, and the planting record
-Per-user tags on each plant: **Growing**, **Have seeds**, **Want**, **Have extra** (choosing it asks plant, seed, or both). A plant can have several at once.
-- **Built-in lists are views, not stored memberships** (owner chose "tags as built-in lists", option C): Growing, Have seeds, Want and Have extra appear on My Lists and are computed from the user's tags and plantings, so plants move on and off them by changing status. Custom lists stay as they are today (manual, a plant can be in several, added or removed any time).
-- **Growing means having at least one active planting.** In this phase, tapping Growing creates a planting with an unknown date; the date, area and removal come in PF-012. This avoids a migration later.
-- Stored in the app's own database, keyed by plant ID (user data stays apart from plant data; see `docs/DATA_INTEGRATION.md`). Needs new tables and endpoints and backend tests.
-- UI: toggle chips on the detail page (under Save), small badges on tiles, the four built-in lists on My Lists. Sign-in required, like saving to a list.
-- Plant IDs differ between sources (fixtures use "1", "2"; cleared data uses permanent UUIDs), so tags only carry meaning for the cleared source.
-- Later in this phase or just after: a "My plants" filter in the Discover sidebar.
+### PF-010: My plants: tags, built-in lists, and the planting record (built 2026-10-27, cleared source only)
+Per-user tags on each plant: **Growing**, **Have seeds**, **Want**, **Have extra** (choosing it opens "Extra of: Plant / Seeds", either or both). A plant can have several at once.
+
+Built:
+- **Detail page:** a "My plant" row of four chips under the data grid, each in its own color. Not signed in: tapping one opens the usual sign-in prompt.
+- **Tiles:** small icon badges over the top-left of the photo for the statuses you have set (also on the related-plants strip and on the list pages).
+- **My Lists page:** a "My plants" section above "Your lists" with the four built-in lists and their counts, each opening a list page. **They are views, not stored lists**: a plant is in Growing while it has an active planting, in Have seeds / Want when tagged, in Have extra when either extra tag is set. Change a status and the plant moves; nothing needs syncing. The list page fetches the plants by id (`/api/plants?source=cleared&ids=...`) so it works after a refresh.
+- **Growing is a planting record.** Turning it on creates a planting with an unknown date; turning it off ends the active planting (`removed_on` is set) and keeps it as history; turning it on again starts a new one.
+- **Backend:** tables `plant_tags` and `plantings` (user data, keyed by the plant data's id string, no foreign key into the plant data); `GET /api/my-plants`, `PUT` / `DELETE /api/my-plants/<plant_id>/<status>`; all need sign-in and are per user. 16 new tests (104 pass).
+- Cleared source only: with Test data or Live API the chips, badges and built-in lists are not shown.
+
+Checked in the browser with a local test user (a user row in the local dev database and a session cookie signed with the local secret; nothing for it is in the repo). **Real Google sign-in has not been tried** with this feature.
+
+Still open:
+- The "My plants" filter in the Discover sidebar (planned for the second step).
+- The planting date, garden area, quantity and notes (PF-012). The `plantings` table already has `planted_on` and `removed_on`; `area_id`, `quantity` and `notes` do not exist yet. `db.create_all()` only creates missing tables, so adding columns later needs a migration (or, locally, deleting `backend/plantfolio.db`).
+- Custom lists are still global, in browser memory, and lost on refresh (PF-007). Only the built-in lists are per user and saved.
+- Tags only mean something for cleared plant ids; nothing stops a status being set on an id the data no longer has (a list page simply shows fewer plants).
 
 ### PF-011: Plant calendar (a new tab, plant-level data)
 A Calendar tab showing, for the plants you have tagged (Growing, Have seeds, Want, Have extra), **when to sow seeds, when to prune, and when each blooms**, by month. This is general to the plant, not personal, so it needs no planting dates (PF-012).
